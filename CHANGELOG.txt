@@ -1,0 +1,6 @@
+Pint's Threat Plates - Changelog
+
+v1.1
+- First public release as Pint's Threat Plates.
+- Threat colours for damage dealers and tanks (automatic in tank stances/forms), threat % and arrows,
+  health text, level, raid markers, target edge, stacking and keep-on-screen, full colour options.

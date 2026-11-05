@@ -19,8 +19,8 @@ local DEFAULT_COLORS = {
 }
 local DEFAULTS = {
 	tank = "auto", tankFlip = false, steps = 10,
-	width = 112, height = 10, nameSize = 10, textSize = 8,
-	showName = true, showLevel = true, healthText = "both", showThreat = true, showArrows = true, showMarks = true, targetEdge = true,
+	width = 150, height = 20, nameSize = 12, textSize = 10,
+	showName = true, showLevel = true, healthText = "both", showThreat = true, showArrows = true, showMarks = true, targetEdge = true, showQuest = true,
 	stack = true, onScreen = true, spacing = 1.1, range = 41,
 	minimap = {},
 }
@@ -35,6 +35,7 @@ local function MakeFont(name, size)
 end
 MakeFont("PintsPlatesName", 10)
 MakeFont("PintsPlatesBar", 8)
+MakeFont("PintsPlatesLevel", 14)
 
 ---------------------------------------------------------------- colours
 local function C(key) return (db and db.colors and db.colors[key]) or DEFAULT_COLORS[key] end
@@ -200,6 +201,10 @@ local function Layout(f)
 	f.text:SetShown(db.healthText ~= "none")
 	if not db.showArrows then f.arrow:Hide() end
 	if not db.showMarks then f.mark:Hide() end
+	if not db.showQuest then f.quest:Hide() end
+	local qs = math.max(22, db.height + 6); f.quest:SetSize(qs, qs)
+	f.quest:ClearAllPoints()
+	if db.showLevel then f.quest:SetPoint("LEFT", f.level, "RIGHT", 1, 0) else f.quest:SetPoint("LEFT", f, "RIGHT", 2, 0) end
 	f.arrow:ClearAllPoints()
 	if db.showThreat then f.arrow:SetPoint("RIGHT", f.rank, "LEFT", -1, 0) else f.arrow:SetPoint("RIGHT", f, "LEFT", -2, 0) end
 	f.mark:ClearAllPoints()
@@ -218,7 +223,7 @@ local function Build(plate)
 	f.text = f.hp:CreateFontString(nil, "OVERLAY", "PintsPlatesBar"); f.text:SetPoint("CENTER", 0, 0)
 	f.name = f:CreateFontString(nil, "OVERLAY", "PintsPlatesName")
 	f.name:SetPoint("BOTTOM", f, "TOP", 0, 2); f.name:SetWordWrap(false)
-	f.level = f:CreateFontString(nil, "OVERLAY", "PintsPlatesName")
+	f.level = f:CreateFontString(nil, "OVERLAY", "PintsPlatesLevel")
 	f.level:SetPoint("LEFT", f, "RIGHT", 3, 0)
 	f.rank = f:CreateFontString(nil, "OVERLAY", "PintsPlatesName")
 	f.rank:SetPoint("RIGHT", f, "LEFT", -3, 0)
@@ -229,11 +234,75 @@ local function Build(plate)
 	f.mark = f:CreateTexture(nil, "OVERLAY")
 	f.mark:SetSize(14, 14)
 	f.mark:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons"); f.mark:Hide()
+	-- quest mob: something you still need to kill or loot for a quest
+	f.quest = f:CreateTexture(nil, "OVERLAY")
+	f.quest:SetSize(14, 14)
+	f.quest:SetTexture("Interface\\GossipFrame\\AvailableQuestIcon"); f.quest:Hide()
 	plate.PintsPlate = f
 	built[#built + 1] = f
 	Layout(f)
 	return f
 end
+
+---------------------------------------------------------------- quest mobs
+-- a mob counts when its tooltip lists a quest objective you haven't finished (kill or collect), or its name is in
+-- an unfinished "... slain: x/y" line of your quest log
+local scanTip
+local function Unfinished(text)
+	if type(text) ~= "string" or IsSecret(text) then return false end
+	local a, b = text:match("(%d+)%s*/%s*(%d+)")
+	return a and tonumber(a) < tonumber(b)
+end
+local function FromTooltipInfo(u)
+	if not (C_TooltipInfo and C_TooltipInfo.GetUnit and Enum and Enum.TooltipDataLineType) then return nil end
+	local OBJ = Enum.TooltipDataLineType.QuestObjective
+	local ok, data = pcall(C_TooltipInfo.GetUnit, u)
+	if not ok or type(data) ~= "table" or type(data.lines) ~= "table" then return nil end
+	for _, l in ipairs(data.lines) do
+		if OBJ and Known(l.type) == OBJ and Known(l.completed) ~= true then return true end
+	end
+	return false
+end
+local function FromTooltip(u)
+	if not scanTip then
+		scanTip = CreateFrame("GameTooltip", "PintsPlatesScanTip", nil, "GameTooltipTemplate")
+		scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
+	end
+	scanTip:ClearLines()
+	if not pcall(scanTip.SetUnit, scanTip, u) then return false end
+	for i = 2, scanTip:NumLines() do
+		local fs = _G["PintsPlatesScanTipTextLeft" .. i]
+		if fs and Unfinished(fs:GetText()) then return true end
+	end
+	return false
+end
+local function FromLog(name)
+	if not (GetNumQuestLogEntries and GetQuestLogTitle and GetQuestLogLeaderBoard) then return false end
+	for i = 1, GetNumQuestLogEntries() or 0 do
+		local _, _, _, header = GetQuestLogTitle(i)
+		if not header then
+			for j = 1, (GetNumQuestLeaderBoards and GetNumQuestLeaderBoards(i)) or 0 do
+				local text, kind, done = GetQuestLogLeaderBoard(j, i)
+				if not done and kind == "monster" and type(text) == "string" and text:find(name, 1, true) then return true end
+			end
+		end
+	end
+	return false
+end
+local function IsQuestMob(u)
+	if UnitIsPlayer(u) or Known(UnitIsDead(u)) then return false end
+	local r = FromTooltipInfo(u)
+	if r == nil then r = FromTooltip(u) end
+	if r then return true end
+	local name = Known(UnitName(u))
+	return name and FromLog(name) or false
+end
+local function QuestIcon(f)
+	if not db.showQuest or not f.unit then f.quest:Hide(); return end
+	local ok, q = pcall(IsQuestMob, f.unit)
+	f.quest:SetShown(ok and q and true or false)
+end
+PP.QuestIcon = QuestIcon
 
 local fmtOK = {}       -- which text formats the game accepts with secret numbers (learned once)
 local function SecretText(fs, fmt, ...)
@@ -312,6 +381,7 @@ local function Setup(f)
 		local c = GetQuestDifficultyColor and GetQuestDifficultyColor(lv)
 		if c then f.level:SetTextColor(c.r, c.g, c.b) else f.level:SetTextColor(1, 0.82, 0) end
 	end
+	QuestIcon(f)
 	Refresh(f)
 end
 
@@ -391,6 +461,7 @@ end
 function PP.ApplyAll()
 	MakeFont("PintsPlatesName", db.nameSize)
 	MakeFont("PintsPlatesBar", db.textSize)
+	MakeFont("PintsPlatesLevel", math.max(db.nameSize + 4, db.height - 2))   -- level beside the bar: sized to the bar
 	for _, f in ipairs(built) do Layout(f) end
 	for _, f in pairs(active) do Setup(f) end
 	PP.Stacking()
@@ -401,6 +472,8 @@ local ev = CreateFrame("Frame")
 ev:RegisterEvent("ADDON_LOADED"); ev:RegisterEvent("PLAYER_LOGIN"); ev:RegisterEvent("PLAYER_REGEN_ENABLED")
 ev:RegisterEvent("NAME_PLATE_UNIT_ADDED"); ev:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 ev:RegisterEvent("UNIT_FACTION"); ev:RegisterEvent("RAID_TARGET_UPDATE"); ev:RegisterEvent("PLAYER_TARGET_CHANGED")
+ev:RegisterEvent("QUEST_LOG_UPDATE")
+local questPending
 ev:SetScript("OnEvent", function(_, e, a1)
 	if e == "ADDON_LOADED" and a1 == ADDON then
 		PintsPlatesDB = PintsPlatesDB or {}
@@ -408,6 +481,14 @@ ev:SetScript("OnEvent", function(_, e, a1)
 		for k, v in pairs(DEFAULTS) do if db[k] == nil then db[k] = (type(v) == "table") and {} or v end end
 		db.colors = db.colors or {}
 		if not db.v2 then db.v2 = true; if (db.spacing or 0) < 1.1 then db.spacing = 1.1 end end   -- stop plates overlapping
+		if not db.v3 then          -- bigger plates: move anyone still on the old default sizes up to the new ones
+			db.v3 = true
+			if db.width == 112 then db.width = 150 end
+			if db.height == 10 then db.height = 14 end
+			if db.nameSize == 10 then db.nameSize = 12 end
+			if db.textSize == 8 then db.textSize = 10 end
+		end
+		if not db.v4 then db.v4 = true; if db.height == 14 or db.height == 10 then db.height = 20 end end   -- taller bars
 		PP.db = db
 	elseif e == "PLAYER_LOGIN" then
 		PP.ApplyAll()
@@ -421,6 +502,12 @@ ev:SetScript("OnEvent", function(_, e, a1)
 	elseif e == "NAME_PLATE_UNIT_ADDED" then Added(a1)
 	elseif e == "NAME_PLATE_UNIT_REMOVED" then Removed(a1)
 	elseif e == "UNIT_FACTION" then if a1 and a1:find("^nameplate") then Removed(a1); Added(a1) end
+	elseif e == "QUEST_LOG_UPDATE" then
+		-- fires in bursts; look again once it settles
+		if not questPending then
+			questPending = true
+			C_Timer.After(0.5, function() questPending = nil; for _, f in pairs(active) do QuestIcon(f) end end)
+		end
 	else for _, f in pairs(active) do Refresh(f) end end
 end)
 
@@ -584,6 +671,7 @@ function PP.ToggleOptions()
 		Check(opt, L, -322, "Keep plates on screen", "onScreen", "Stops plates of close or large mobs sliding off the top of the screen. In tight caves this can bunch a few plates at the screen edge - turn it off if that bothers you.")
 		Stepper(opt, L, -348, "Gap between plates", "spacing", 0.8, 2, 0.1, function(v) return ("%.1f"):format(v) end)
 		Stepper(opt, L, -372, "Distance (yards)", "range", 10, 41, 1, function(v) return tostring(math.floor(v)) .. "  (game max)" end)
+		Check(opt, L, -400, "Quest icon on quest mobs", "showQuest", "A yellow ! beside the level on mobs you still need to kill or loot for a quest.")
 
 		-- right column: threat colours
 		local X = 318

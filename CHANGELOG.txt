@@ -1,5 +1,10 @@
 Pint's Threat Plates - Changelog
 
+v1.2.1
+- A yellow ! beside the level on mobs you still need to kill or loot for a quest ("Quest icon on quest mobs" in /pn).
+- Bigger plates by default: wider and taller bars, bigger name, health and level text (your own sizes are kept).
+- The level number is sized to the bar.
+
 v1.2
 - Works on WoW Forever (the modern game client). Classic Era is unchanged.
 - Health bars and health text still show when the game hides the exact numbers.

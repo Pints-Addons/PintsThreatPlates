@@ -1,5 +1,10 @@
 Pint's Threat Plates - Changelog
 
+v1.2
+- Works on WoW Forever (the modern game client). Classic Era is unchanged.
+- Health bars and health text still show when the game hides the exact numbers.
+- Tank colours work from your stance or form when buffs are hidden in combat.
+
 v1.1
 - First public release as Pint's Threat Plates.
 - Threat colours for damage dealers and tanks (automatic in tank stances/forms), threat % and arrows,

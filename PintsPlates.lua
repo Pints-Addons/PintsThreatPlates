@@ -6,6 +6,9 @@
 --   Everything (what shows, colours, sizes, stacking) is set in the options window: /pn
 --   Friendly units keep Blizzard's own plates.
 local ADDON = ...
+-- Compatibility: WoW Forever runs on the modern game client, where these older functions moved or were renamed.
+local IsAddOnLoaded = IsAddOnLoaded or (C_AddOns and C_AddOns.IsAddOnLoaded)
+
 local PP = {}
 _G.PintsPlates = PP
 
@@ -67,14 +70,35 @@ local TANK_AURAS = {
 	[25780] = true,                                  -- Righteous Fury
 	[407627] = true,                                 -- Righteous Fury (Season of Discovery)
 }
+local TANK_FORMS = { [5] = true, [8] = true, [18] = true }   -- bear, dire bear, Defensive Stance (modern client's form ids)
+local tankKnown = false
+local function Hidden(v) return type(issecretvalue) == "function" and issecretvalue(v) end
+-- true / false, or nil when the game won't say right now (buffs are hidden in combat on the modern client)
+local function ReadTank()
+	if UnitBuff then
+		for i = 1, 40 do
+			local name, _, _, _, _, _, _, _, _, id = UnitBuff("player", i)
+			if not name then break end
+			if TANK_AURAS[id] then return true end
+		end
+		return false
+	end
+	local form = GetShapeshiftFormID and GetShapeshiftFormID()
+	if form and not Hidden(form) and TANK_FORMS[form] then return true end
+	if not (C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID) then return nil end
+	for id in pairs(TANK_AURAS) do
+		local ok, a = pcall(C_UnitAuras.GetPlayerAuraBySpellID, id)
+		if not ok or Hidden(a) then return nil end
+		if a then return true end
+	end
+	if InCombatLockdown() then return nil end   -- "no aura" in combat may just mean hidden
+	return false
+end
 local function IsTank()
 	if db.tank == "on" then return true elseif db.tank == "off" then return false end
-	for i = 1, 40 do
-		local name, _, _, _, _, _, _, _, _, id = UnitBuff("player", i)
-		if not name then break end
-		if TANK_AURAS[id] then return true end
-	end
-	return false
+	local r = ReadTank()
+	if r ~= nil then tankKnown = r end
+	return tankKnown
 end
 
 -- everyone in your group (and their pets) who could hold threat
@@ -87,11 +111,22 @@ local function GroupUnits()
 	end
 	return out
 end
+-- the modern game client (WoW Forever) keeps some numbers "secret": they can be drawn but not compared
+local SECRET = type(issecretvalue) == "function"
+local function IsSecret(v) return SECRET and issecretvalue(v) end
+local function Known(v) if IsSecret(v) then return nil end return v end
+-- UnitDetailedThreatSituation, with anything the game hides treated as "no information"
+local function Threat(a, b)
+	local tanking, status, scaled, raw, value = UnitDetailedThreatSituation(a, b)
+	if IsSecret(tanking) or IsSecret(status) or IsSecret(scaled) or IsSecret(value) then return nil end
+	return tanking, status, scaled, raw, value
+end
+
 local function TopOther(unit)
 	local other = 0
 	for _, u in ipairs(GroupUnits()) do
-		if UnitExists(u) and not UnitIsUnit(u, "player") then
-			local _, _, _, _, v = UnitDetailedThreatSituation(u, unit)
+		if UnitExists(u) and not Known(UnitIsUnit(u, "player")) then
+			local _, _, _, _, v = Threat(u, unit)
 			if v and v > other then other = v end
 		end
 	end
@@ -101,8 +136,8 @@ end
 -- returns r, g, b for a mob, or nil when nobody has threat on it yet
 local function ThreatColor(unit)
 	if not UnitDetailedThreatSituation then return nil end
-	local tanking, status, scaled, _, mine = UnitDetailedThreatSituation("player", unit)
-	if status == nil and not UnitAffectingCombat(unit) then return nil end
+	local tanking, status, scaled, _, mine = Threat("player", unit)
+	if status == nil and not Known(UnitAffectingCombat(unit)) then return nil end
 	if IsTank() then
 		if tanking then
 			local closeness = (mine and mine > 0) and (TopOther(unit) / mine) or 0
@@ -119,7 +154,7 @@ end
 -- your threat as % of pulling it (100 = it's on you)
 local function ThreatPct(unit)
 	if not UnitDetailedThreatSituation then return nil end
-	local _, status, scaled = UnitDetailedThreatSituation("player", unit)
+	local _, status, scaled = Threat("player", unit)
 	if status == nil then return nil end
 	return scaled
 end
@@ -128,7 +163,7 @@ end
 -- 100 plus how far ahead of the next person you are (up to 200)
 local function ThreatScore(unit)
 	if not UnitDetailedThreatSituation then return nil end
-	local tanking, status, scaled, _, mine = UnitDetailedThreatSituation("player", unit)
+	local tanking, status, scaled, _, mine = Threat("player", unit)
 	if status == nil then return nil end
 	if tanking then
 		local lead = (mine and mine > 0) and (1 - math.min(1, TopOther(unit) / mine)) or 1
@@ -141,10 +176,10 @@ local function ReactionColor(unit)
 	if UnitIsTapDenied and UnitIsTapDenied(unit) then return unpack(C("tapped")) end
 	if UnitIsPlayer(unit) then
 		local _, cls = UnitClass(unit)
-		local c = cls and RAID_CLASS_COLORS[cls]
+		local c = Known(cls) and RAID_CLASS_COLORS[cls]
 		if c then return c.r, c.g, c.b end
 	end
-	local r = UnitReaction(unit, "player") or 2
+	local r = Known(UnitReaction(unit, "player")) or 2
 	if r == 4 then return unpack(C("neutral")) end
 	return unpack(C("hostile"))
 end
@@ -200,11 +235,34 @@ local function Build(plate)
 	return f
 end
 
+local fmtOK = {}       -- which text formats the game accepts with secret numbers (learned once)
+local function SecretText(fs, fmt, ...)
+	if fmtOK[fmt] == false then return false end
+	local ok = pcall(fs.SetFormattedText, fs, fmt, ...)
+	fmtOK[fmt] = ok
+	return ok
+end
+local function Abbrev(v) if AbbreviateNumbers then return AbbreviateNumbers(v) end return v end
+-- secret health: the game draws the bar and the text, we don't touch the numbers
+local function SecretHealth(f, u, hp, max)
+	f.hp:SetMinMaxValues(0, max); f.hp:SetValue(hp)
+	local mode = db.healthText
+	if mode == "none" then return end
+	if UnitIsDeadOrGhost(u) then f.text:SetText("Dead"); return end
+	local pct = UnitHealthPercent and CurveConstants and CurveConstants.ScaleTo100 and UnitHealthPercent(u, true, CurveConstants.ScaleTo100)
+	local a, b = Abbrev(hp), Abbrev(max)
+	if mode == "percent" then
+		if not (pct and SecretText(f.text, "%.0f%%", pct)) then SecretText(f.text, "%s", a) end
+	elseif mode == "numbers" then SecretText(f.text, "%s/%s", a, b)
+	elseif not (pct and SecretText(f.text, "%s/%s | %.0f%%", a, b, pct)) then SecretText(f.text, "%s/%s", a, b) end
+end
+
 local function Refresh(f)
 	local u = f.unit
 	if not u or not UnitExists(u) then return end
 	-- health text
 	local hp, max = UnitHealth(u), UnitHealthMax(u)
+	if IsSecret(hp) or IsSecret(max) then SecretHealth(f, u, hp, max) else
 	if max <= 0 then max = 1 end
 	f.hp:SetMinMaxValues(0, max); f.hp:SetValue(hp)
 	local pct = math.floor(hp / max * 100 + 0.5) .. "%"
@@ -214,6 +272,7 @@ local function Refresh(f)
 		elseif mode == "percent" or (max == 100 and not UnitPlayerControlled(u)) then f.text:SetText(pct)   -- the game only gives a % for some mobs
 		elseif mode == "numbers" then f.text:SetText(Short(hp) .. "/" .. Short(max))
 		else f.text:SetText(Short(hp) .. "/" .. Short(max) .. " | " .. pct) end
+	end
 	end
 	-- colour: threat in a fight, otherwise reaction
 	local r, g, b = ThreatColor(u)
@@ -228,9 +287,9 @@ local function Refresh(f)
 	if not r then r, g, b = ReactionColor(u) end
 	f.hp:SetStatusBarColor(r, g, b)
 	-- your target gets a white edge
-	if db.targetEdge and UnitIsUnit(u, "target") then f.hp:SetBackdropBorderColor(1, 1, 1, 1) else f.hp:SetBackdropBorderColor(0, 0, 0, 1) end
+	if db.targetEdge and Known(UnitIsUnit(u, "target")) then f.hp:SetBackdropBorderColor(1, 1, 1, 1) else f.hp:SetBackdropBorderColor(0, 0, 0, 1) end
 	-- raid marker
-	local idx = db.showMarks and GetRaidTargetIndex(u)
+	local idx = db.showMarks and Known(GetRaidTargetIndex(u))
 	if idx then SetRaidTargetIconTexture(f.mark, idx); f.mark:Show() else f.mark:Hide() end
 end
 
@@ -239,13 +298,13 @@ local function Setup(f)
 	f.name:SetText(UnitName(u) or "")
 	if UnitIsPlayer(u) then
 		local _, cls = UnitClass(u)
-		local c = cls and RAID_CLASS_COLORS[cls]
+		local c = Known(cls) and RAID_CLASS_COLORS[cls]
 		if c then f.name:SetTextColor(c.r, c.g, c.b) else f.name:SetTextColor(1, 1, 1) end
 	else
 		f.name:SetTextColor(1, 1, 1)
 	end
-	local lv = UnitLevel(u) or 0
-	local cl = UnitClassification and UnitClassification(u)
+	local lv = Known(UnitLevel(u)) or 0
+	local cl = UnitClassification and Known(UnitClassification(u))
 	local elite = (cl == "elite" or cl == "rareelite" or cl == "worldboss") and "+" or ""
 	if lv <= 0 then f.level:SetText("??"); f.level:SetTextColor(1, 0.1, 0.1)
 	else
@@ -272,11 +331,12 @@ end
 -- so fading the plate doesn't reach them; find those and fade them directly
 local function Sweep(frame, hide, depth)
 	if depth > 4 or (frame.IsForbidden and frame:IsForbidden()) then return end
+	-- (on the modern client the answer can be "secret": then leave that piece alone)
 	for _, r in ipairs({ frame:GetRegions() }) do
-		if r.IsIgnoringParentAlpha and r:IsIgnoringParentAlpha() then r:SetAlpha(hide and 0 or 1) end
+		if r.IsIgnoringParentAlpha and Known(r:IsIgnoringParentAlpha()) then r:SetAlpha(hide and 0 or 1) end
 	end
 	for _, c in ipairs({ frame:GetChildren() }) do
-		if c.IsIgnoringParentAlpha and c:IsIgnoringParentAlpha() then Fade(c, hide) end
+		if c.IsIgnoringParentAlpha and Known(c:IsIgnoringParentAlpha()) then Fade(c, hide) end
 		Sweep(c, hide, depth + 1)
 	end
 end

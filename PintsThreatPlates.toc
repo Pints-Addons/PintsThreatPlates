@@ -2,7 +2,7 @@
 ## Title: |cffd4a017Pint's|r Threat Plates
 ## Notes: Enemy nameplates coloured by threat - health numbers and %, level, threat % and arrows, raid markers, stacking. Tank colours switch on by themselves. /pn
 ## Author: Jake (Pint's Add-ons, built with Claude)
-## Version: 1.1
+## Version: 1.2
 ## X-Curse-Project-ID: 1779426
 ## IconTexture: Interface\Icons\Ability_Warrior_DefensiveStance
 ## OptionalDeps: LibDBIcon-1.0

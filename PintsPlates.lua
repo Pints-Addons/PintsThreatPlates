@@ -20,7 +20,7 @@ local DEFAULT_COLORS = {
 local DEFAULTS = {
 	tank = "auto", tankFlip = false, steps = 10,
 	width = 150, height = 20, nameSize = 12, textSize = 10,
-	showName = true, showLevel = true, healthText = "both", showThreat = true, showArrows = true, showMarks = true, targetEdge = true, showQuest = true,
+	showName = true, showLevel = true, healthText = "both", showThreat = true, showArrows = true, showMarks = true, targetEdge = true, showQuest = true, showDebuffs = true, showCast = true, friendly = false, firstName = false,
 	stack = true, onScreen = true, spacing = 1.1, range = 41,
 	minimap = {},
 }
@@ -353,7 +353,8 @@ local function Refresh(f)
 	elseif db.showThreat then
 		f.rank:SetText("")
 	end
-	if not r then r, g, b = ReactionColor(u) end
+	if f.friendly then r, g, b = 0.2, 0.8, 0.2                 -- friendly: always green
+	elseif not r then r, g, b = ReactionColor(u) end
 	f.hp:SetStatusBarColor(r, g, b)
 	-- your target gets a white edge
 	if db.targetEdge and Known(UnitIsUnit(u, "target")) then f.hp:SetBackdropBorderColor(1, 1, 1, 1) else f.hp:SetBackdropBorderColor(0, 0, 0, 1) end
@@ -366,7 +367,7 @@ local function Setup(f)
 	local u = f.unit
 	-- WoW Forever names have a second name ("Pint Sunders"), which UnitName leaves off
 	local ok, full = false, nil
-	if GetUnitName then ok, full = pcall(GetUnitName, u, false) end
+	if GetUnitName and not db.firstName then ok, full = pcall(GetUnitName, u, false) end    -- ("First names only" leaves it off)
 	f.name:SetText((ok and full) or UnitName(u) or "")
 	if UnitIsPlayer(u) then
 		local _, cls = UnitClass(u)
@@ -409,7 +410,7 @@ local function Sweep(frame, hide, depth)
 		if r.IsIgnoringParentAlpha and Known(r:IsIgnoringParentAlpha()) then r:SetAlpha(hide and 0 or 1) end
 	end
 	for _, c in ipairs({ frame:GetChildren() }) do
-		if c.IsIgnoringParentAlpha and Known(c:IsIgnoringParentAlpha()) then Fade(c, hide) end
+		if c.IsIgnoringParentAlpha and Known(c:IsIgnoringParentAlpha()) and not (c.ppMine and db.showDebuffs) then Fade(c, hide) end
 		Sweep(c, hide, depth + 1)
 	end
 end
@@ -420,26 +421,146 @@ local function HideBlizzard(plate, hide)
 	for _, r in ipairs({ plate:GetRegions() }) do r:SetAlpha(hide and 0 or 1) end
 end
 
+---------------------------------------------------------------- your debuffs, in a row above the name
+-- Classic Era: our own icons, read from the mob's debuffs (yours only), with the time left as a sweep.
+-- WoW Forever: add-ons can't read a mob's auras in combat there, so instead Blizzard's own debuff row on the plate
+-- (which the game keeps up to date, in combat too) is kept visible and moved above our name.
+local MAXD, DSIZE = 6, 20
+local function DebuffAnchor(f) if db.showName then return f.name, "TOP", 3 end return f, "TOP", 4 end
+local function ClassicDebuffs(f)
+	f.debuffs = f.debuffs or {}
+	local n = 0
+	if db.showDebuffs and UnitAura then
+		for i = 1, 40 do
+			local name, icon, count, _, duration, expires = UnitAura(f.unit, i, "HARMFUL|PLAYER")
+			if not name then break end
+			n = n + 1
+			if n > MAXD then n = MAXD; break end
+			local d = f.debuffs[n]
+			if not d then
+				d = CreateFrame("Frame", nil, f); d:SetSize(DSIZE, DSIZE)
+				d.icon = d:CreateTexture(nil, "ARTWORK"); d.icon:SetAllPoints(); d.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+				d.edge = d:CreateTexture(nil, "BACKGROUND"); d.edge:SetPoint("TOPLEFT", -1, 1); d.edge:SetPoint("BOTTOMRIGHT", 1, -1); d.edge:SetColorTexture(0, 0, 0, 1)
+				d.cd = CreateFrame("Cooldown", nil, d, "CooldownFrameTemplate"); d.cd:SetAllPoints(); d.cd:SetReverse(true); d.cd:SetHideCountdownNumbers(false)
+				d.count = d:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmall"); d.count:SetPoint("BOTTOMRIGHT", 2, -2)
+				f.debuffs[n] = d
+			end
+			d.icon:SetTexture(icon)
+			d.count:SetText((count and count > 1) and count or "")
+			if duration and duration > 0 and expires then d.cd:SetCooldown(expires - duration, duration); d.cd:Show() else d.cd:Hide() end
+			d:Show()
+		end
+	end
+	for i = n + 1, #f.debuffs do f.debuffs[i]:Hide() end
+	-- a centred row above the name
+	local a, p, y = DebuffAnchor(f)
+	local w = n * (DSIZE + 2) - 2
+	for i = 1, n do
+		local d = f.debuffs[i]
+		d:ClearAllPoints(); d:SetPoint("BOTTOMLEFT", a, p, -w / 2 + (i - 1) * (DSIZE + 2), y)
+	end
+end
+-- Blizzard's aura row on the plate (the name differs between game versions)
+local function BlizzAuras(plate)
+	local uf = plate.UnitFrame
+	if not uf then return end
+	return uf.AurasFrame or uf.BuffFrame or uf.DebuffFrame
+end
+local function ModernDebuffs(f, plate)
+	local af = plate and BlizzAuras(plate)
+	if not af or (af.IsForbidden and af:IsForbidden()) then return end
+	pcall(function()
+		if db.showDebuffs then
+			-- shown even though the rest of Blizzard's plate is see-through, and placed above our name
+			af.ppHide = nil
+			if af.SetIgnoreParentAlpha then af:SetIgnoreParentAlpha(true) end
+			af.ppBusy = true; af:SetAlpha(1); af.ppBusy = nil
+			local a, p, y = DebuffAnchor(f)
+			af:ClearAllPoints(); af:SetPoint("BOTTOM", a, p, 0, y)
+			af.ppMine = true
+		elseif af.ppMine then
+			af.ppMine = nil
+			if af.SetIgnoreParentAlpha then af:SetIgnoreParentAlpha(false) end
+		end
+	end)
+end
+local function Debuffs(f)
+	if not f.unit then return end
+	if SECRET then ModernDebuffs(f, C_NamePlate.GetNamePlateForUnit(f.unit)) else pcall(ClassicDebuffs, f) end
+end
+PP.Debuffs = Debuffs
+
+---------------------------------------------------------------- the mob's cast bar, under its health bar
+-- icon, spell name, a filling bar and the seconds left; grey when it can't be interrupted. On WoW Forever the game may
+-- hide a mob's cast times: the bar still fills (the game works that out itself), only the seconds are left off.
+local function Has(v) return IsSecret(v) or v ~= nil end     -- a hidden value counts, without testing it
+local function MakeCast(f)
+	local c = CreateFrame("StatusBar", nil, f, "BackdropTemplate")
+	c:SetPoint("TOPLEFT", f, "BOTTOMLEFT", 0, -3); c:SetPoint("TOPRIGHT", f, "BOTTOMRIGHT", 0, -3)
+	c:SetStatusBarTexture("Interface\\TargetingFrame\\UI-StatusBar")
+	c:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
+	c:SetBackdropColor(0, 0, 0, 0.6); c:SetBackdropBorderColor(0, 0, 0, 1)
+	c.icon = c:CreateTexture(nil, "ARTWORK"); c.icon:SetPoint("RIGHT", c, "LEFT", -2, 0); c.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+	c.name = c:CreateFontString(nil, "OVERLAY", "PintsPlatesBar"); c.name:SetPoint("LEFT", 3, 0); c.name:SetPoint("RIGHT", -26, 0)
+	c.name:SetJustifyH("LEFT"); c.name:SetWordWrap(false)
+	c.time = c:CreateFontString(nil, "OVERLAY", "PintsPlatesBar"); c.time:SetPoint("RIGHT", -2, 0)
+	c:Hide()
+	c:SetScript("OnUpdate", function(self)
+		self:SetValue(GetTime() * 1000)
+		if self.endMS then local left = self.endMS / 1000 - GetTime(); self.time:SetText(left > 0 and ("%.1f"):format(left) or "") end
+	end)
+	f.cast = c
+end
+local function Cast(f)
+	local c, u = f.cast, f.unit
+	if not c then return end
+	if not (db.showCast and u and UnitExists(u)) then c:Hide(); return end
+	local h = math.max(8, math.floor(db.height * 0.7 + 0.5))
+	c:SetHeight(h); c.icon:SetSize(h + 2, h + 2)
+	local channel = false
+	local name, _, tex, s, e, _, _, noInt = UnitCastingInfo(u)
+	if not Has(name) then name, _, tex, s, e, _, noInt = UnitChannelInfo(u); channel = Has(name) end
+	if not (Has(name) and Has(s) and Has(e)) then c:Hide(); return end
+	c:SetMinMaxValues(s, e)                       -- the game accepts these even when it keeps them hidden from add-ons
+	c.name:SetText(name); c.icon:SetTexture(tex)
+	local shut = (not IsSecret(noInt)) and noInt
+	if shut then c:SetStatusBarColor(0.6, 0.6, 0.6)
+	elseif channel then c:SetStatusBarColor(0.3, 0.75, 1)
+	else c:SetStatusBarColor(1, 0.7, 0) end
+	c.endMS = (not IsSecret(e)) and e or nil
+	c.time:SetText("")
+	c:Show()
+end
+PP.Cast = Cast
+
 local function Added(unit)
 	local plate = C_NamePlate.GetNamePlateForUnit(unit)
 	if not plate or (plate.IsForbidden and plate:IsForbidden()) then return end
-	if not UnitCanAttack("player", unit) then
+	local friendly = not UnitCanAttack("player", unit)
+	if friendly and not db.friendly then
 		HideBlizzard(plate, false)
 		if plate.PintsPlate then plate.PintsPlate:Hide() end
+		active[unit] = nil
 		return
 	end
 	local f = plate.PintsPlate or Build(plate)
+	f.friendly = friendly
+	if not f.cast then MakeCast(f) end
 	f.unit = unit
 	HideBlizzard(plate, true)
 	C_Timer.After(0, function() if plate.PintsPlate == f and f.unit == unit then HideBlizzard(plate, true) end end)
 	f:Show()
 	active[unit] = f
 	Setup(f)
+	Debuffs(f)
+	pcall(Cast, f)
+	if SECRET then C_Timer.After(0.1, function() if f.unit == unit then Debuffs(f) end end) end
 end
 
+PP.Added = Added
 local function Removed(unit)
 	local f = active[unit]
-	if f then f:Hide(); f.unit = nil; active[unit] = nil end
+	if f then f:Hide(); if f.cast then f.cast:Hide() end; f.unit = nil; active[unit] = nil end
 end
 
 ---------------------------------------------------------------- stacking, range, sizes
@@ -466,7 +587,14 @@ function PP.ApplyAll()
 	MakeFont("PintsPlatesBar", db.textSize)
 	MakeFont("PintsPlatesLevel", math.max(db.nameSize + 4, db.height - 2))   -- level beside the bar: sized to the bar
 	for _, f in ipairs(built) do Layout(f) end
-	for _, f in pairs(active) do Setup(f) end
+	for _, f in pairs(active) do Setup(f); if PP.Debuffs then PP.Debuffs(f) end end
+	-- every plate on screen looked at again (a setting may have changed which ones are ours, e.g. friendly plates)
+	if C_NamePlate and C_NamePlate.GetNamePlates and PP.Added then
+		for _, plate in ipairs(C_NamePlate.GetNamePlates() or {}) do
+			local u = plate.namePlateUnitToken or (plate.UnitFrame and plate.UnitFrame.unit)
+			if u then pcall(PP.Added, u) end
+		end
+	end
 	PP.Stacking()
 end
 
@@ -476,6 +604,13 @@ ev:RegisterEvent("ADDON_LOADED"); ev:RegisterEvent("PLAYER_LOGIN"); ev:RegisterE
 ev:RegisterEvent("NAME_PLATE_UNIT_ADDED"); ev:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 ev:RegisterEvent("UNIT_FACTION"); ev:RegisterEvent("RAID_TARGET_UPDATE"); ev:RegisterEvent("PLAYER_TARGET_CHANGED")
 ev:RegisterEvent("QUEST_LOG_UPDATE")
+if not SECRET then ev:RegisterEvent("UNIT_AURA") end
+local CASTEV = {}
+for _, e in ipairs({ "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAILED", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_DELAYED",
+	"UNIT_SPELLCAST_CHANNEL_START", "UNIT_SPELLCAST_CHANNEL_STOP", "UNIT_SPELLCAST_CHANNEL_UPDATE", "UNIT_SPELLCAST_INTERRUPTIBLE",
+	"UNIT_SPELLCAST_NOT_INTERRUPTIBLE" }) do
+	if pcall(ev.RegisterEvent, ev, e) then CASTEV[e] = true end
+end
 local questPending
 ev:SetScript("OnEvent", function(_, e, a1)
 	if e == "ADDON_LOADED" and a1 == ADDON then
@@ -504,6 +639,12 @@ ev:SetScript("OnEvent", function(_, e, a1)
 	elseif e == "PLAYER_REGEN_ENABLED" then if PP.pending then PP.pending = nil; PP.Stacking() end
 	elseif e == "NAME_PLATE_UNIT_ADDED" then Added(a1)
 	elseif e == "NAME_PLATE_UNIT_REMOVED" then Removed(a1)
+	elseif CASTEV[e] then
+		local f = a1 and active[a1]
+		if f then pcall(Cast, f) end
+	elseif e == "UNIT_AURA" then
+		local f = a1 and active[a1]
+		if f then Debuffs(f) end
 	elseif e == "UNIT_FACTION" then if a1 and a1:find("^nameplate") then Removed(a1); Added(a1) end
 	elseif e == "QUEST_LOG_UPDATE" then
 		-- fires in bursts; look again once it settles
@@ -645,7 +786,7 @@ end
 function PP.ToggleOptions()
 	if not opt then
 		opt = CreateFrame("Frame", "PintsPlatesOptions", UIParent, "BasicFrameTemplateWithInset")
-		opt:SetSize(600, 470); opt:SetPoint("CENTER"); opt:SetFrameStrata("DIALOG"); opt:SetClampedToScreen(true)
+		opt:SetSize(600, 496); opt:SetPoint("CENTER"); opt:SetFrameStrata("DIALOG"); opt:SetClampedToScreen(true)
 		opt:SetMovable(true); opt:EnableMouse(true); opt:RegisterForDrag("LeftButton")
 		opt:SetScript("OnDragStart", opt.StartMoving); opt:SetScript("OnDragStop", opt.StopMovingOrSizing)
 		tinsert(UISpecialFrames, "PintsPlatesOptions")
@@ -661,6 +802,10 @@ function PP.ToggleOptions()
 		Check(opt, L + 140, -74, "Threat arrows", "showArrows", "Red up arrow on your highest-threat mob, green down arrow on your lowest.")
 		Check(opt, L, -96, "Raid markers", "showMarks")
 		Check(opt, L + 140, -96, "White edge on target", "targetEdge")
+		Check(opt, L, -422, "Your debuffs above the name", "showDebuffs", "Icons for your own debuffs on each mob, in a row above its name.")
+		Check(opt, L + 200, -422, "Cast bar", "showCast", "The mob's cast bar, under its health bar.")
+		Check(opt, L, -444, "Friendly plates (green)", "friendly", "Players and others on your side get these plates too, with a green health bar, instead of the game's own. Turn on friendly nameplates in game (Shift-V) to see them.")
+		Check(opt, L + 200, -444, "First names only", "firstName", "Leave off WoW Forever's second names (\"Pint\" instead of \"Pint Sunders\").")
 		Choice(opt, L, -122, "Health text", "healthText", { { "both", "1234/1234 | 56%" }, { "numbers", "1234/1234" }, { "percent", "56%" }, { "none", "Nothing" } })
 
 		Head(opt, L, -156, "Size")

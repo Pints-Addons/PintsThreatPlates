@@ -1,5 +1,12 @@
 Pint's Threat Plates - Changelog
 
+v1.3
+- Your debuffs in a row above each mob's name (WoW Forever: the game's own debuff row, kept up to date in combat).
+- The mob's cast bar under its health bar: icon, spell, time left; grey when it can't be interrupted.
+- Friendly plates (green): players and others on your side can get these plates too, with a green health bar.
+- First names only: leaves off WoW Forever's second names.
+- All four are switches in /pn.
+
 v1.2.2
 - WoW Forever: player nameplates show the full name (first and second).
 

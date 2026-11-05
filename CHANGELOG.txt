@@ -1,5 +1,8 @@
 Pint's Threat Plates - Changelog
 
+v1.2.2
+- WoW Forever: player nameplates show the full name (first and second).
+
 v1.2.1
 - A yellow ! beside the level on mobs you still need to kill or loot for a quest ("Quest icon on quest mobs" in /pn).
 - Bigger plates by default: wider and taller bars, bigger name, health and level text (your own sizes are kept).

@@ -364,7 +364,10 @@ end
 
 local function Setup(f)
 	local u = f.unit
-	f.name:SetText(UnitName(u) or "")
+	-- WoW Forever names have a second name ("Pint Sunders"), which UnitName leaves off
+	local ok, full = false, nil
+	if GetUnitName then ok, full = pcall(GetUnitName, u, false) end
+	f.name:SetText((ok and full) or UnitName(u) or "")
 	if UnitIsPlayer(u) then
 		local _, cls = UnitClass(u)
 		local c = Known(cls) and RAID_CLASS_COLORS[cls]

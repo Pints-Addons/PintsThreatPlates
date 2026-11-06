@@ -245,36 +245,79 @@ local function Build(plate)
 end
 
 ---------------------------------------------------------------- quest mobs
--- a mob counts when its tooltip lists a quest objective you haven't finished (kill or collect), or its name is in
--- an unfinished "... slain: x/y" line of your quest log
+-- a mob counts when its tooltip lists a quest objective that isn't finished (kill or collect), or its name is in
+-- an unfinished "... slain: x/y" line of your quest log.
+-- In a group the tooltip also lists your group's objectives under each member's name: "me" means you still need it
+-- (yellow !), "group" means only someone else in your group does (grey !).
 local scanTip
 local function Unfinished(text)
 	if type(text) ~= "string" or IsSecret(text) then return false end
 	local a, b = text:match("(%d+)%s*/%s*(%d+)")
 	return a and tonumber(a) < tonumber(b)
 end
-local function FromTooltipInfo(u)
+local function Short(n) return type(n) == "string" and (n:match("^([^%-]+)") or n) or nil end
+-- the other people in your group, by name
+local function GroupNames()
+	local t, n = {}, 0
+	local raid = IsInRaid and IsInRaid()
+	local count = raid and (GetNumGroupMembers and GetNumGroupMembers() or 0) or 4
+	for i = 1, count do
+		local u = raid and ("raid" .. i) or ("party" .. i)
+		if UnitExists(u) and not UnitIsUnit(u, "player") then
+			local name = Known(UnitName(u))
+			if name then t[name] = true; n = n + 1 end
+			-- (and the full name WoW Forever shows in tooltips)
+			if GetUnitName then local ok, full = pcall(GetUnitName, u, false); full = ok and Known(full); if full then t[full] = true end end
+		end
+	end
+	return n > 0 and t or nil
+end
+-- "who" is the owner of the objective lines that follow: nil (you) until a group member's name line appears
+local function Who(text, group, me)
+	text = Known(text); if type(text) ~= "string" then return nil end
+	text = text:gsub("^%s+", ""):gsub("%s+$", "")
+	-- (WoW Forever lists you by your full name, "Rain Mon"; me holds every form of your name)
+	if me[text] or me[Short(text) or ""] then return "me" end
+	if group and (group[text] or group[Short(text) or ""]) then return "group" end
+end
+local function Merge(best, who) if best == "me" or who == "me" then return "me" end return who or best end
+local function FromTooltipInfo(u, group, me)
+	-- not in a group: every objective listed is yours
+	if not group then me = setmetatable({}, { __index = function() return true end }) end
 	if not (C_TooltipInfo and C_TooltipInfo.GetUnit and Enum and Enum.TooltipDataLineType) then return nil end
-	local OBJ = Enum.TooltipDataLineType.QuestObjective
+	local T = Enum.TooltipDataLineType
+	local OBJ, TITLE, PLAYER = T.QuestObjective, T.QuestTitle, T.QuestPlayer
 	local ok, data = pcall(C_TooltipInfo.GetUnit, u)
 	if not ok or type(data) ~= "table" or type(data.lines) ~= "table" then return nil end
+	local owner, best = "me", false
 	for _, l in ipairs(data.lines) do
-		if OBJ and Known(l.type) == OBJ and Known(l.completed) ~= true then return true end
+		local ty = Known(l.type)
+		if TITLE and ty == TITLE then owner = "me"
+		elseif PLAYER and ty == PLAYER then owner = Who(l.leftText, group, me) or "group"
+		elseif OBJ and ty == OBJ then
+			if Known(l.completed) ~= true then best = Merge(best, owner) end
+		elseif group then
+			owner = Who(l.leftText, group, me) or owner
+		end
 	end
-	return false
+	return best
 end
-local function FromTooltip(u)
+local function FromTooltip(u, group, me)
+	if not group then me = setmetatable({}, { __index = function() return true end }) end
 	if not scanTip then
 		scanTip = CreateFrame("GameTooltip", "PintsPlatesScanTip", nil, "GameTooltipTemplate")
 		scanTip:SetOwner(WorldFrame, "ANCHOR_NONE")
 	end
 	scanTip:ClearLines()
 	if not pcall(scanTip.SetUnit, scanTip, u) then return false end
+	local owner, best = "me", false
 	for i = 2, scanTip:NumLines() do
 		local fs = _G["PintsPlatesScanTipTextLeft" .. i]
-		if fs and Unfinished(fs:GetText()) then return true end
+		local text = fs and fs:GetText()
+		if Unfinished(text) then best = Merge(best, owner)
+		elseif group then owner = Who(text, group, me) or owner end
 	end
-	return false
+	return best
 end
 local function FromLog(name)
 	if not (GetNumQuestLogEntries and GetQuestLogTitle and GetQuestLogLeaderBoard) then return false end
@@ -289,18 +332,34 @@ local function FromLog(name)
 	end
 	return false
 end
+-- "me", "group" or false
 local function IsQuestMob(u)
 	if UnitIsPlayer(u) or Known(UnitIsDead(u)) then return false end
-	local r = FromTooltipInfo(u)
-	if r == nil then r = FromTooltip(u) end
-	if r then return true end
+	local group, me = GroupNames(), {}
+	-- every form of your name: first name, full name ("Rain Mon"), and with the realm
+	local first = Known(UnitName("player"))
+	if first then me[first] = true end
+	if GetUnitName then
+		local ok, full = pcall(GetUnitName, "player", false); full = ok and Known(full)
+		if full then me[full] = true end
+		local ok2, withRealm = pcall(GetUnitName, "player", true); withRealm = ok2 and Known(withRealm)
+		if withRealm then me[withRealm] = true end
+	end
+	local r = FromTooltipInfo(u, group, me)
+	if r == nil then r = FromTooltip(u, group, me) end
+	if r == "me" then return "me" end
 	local name = Known(UnitName(u))
-	return name and FromLog(name) or false
+	if name and FromLog(name) then return "me" end
+	return r or false
 end
 local function QuestIcon(f)
 	if not db.showQuest or not f.unit then f.quest:Hide(); return end
 	local ok, q = pcall(IsQuestMob, f.unit)
-	f.quest:SetShown(ok and q and true or false)
+	if not ok or not q then f.quest:Hide(); return end
+	local grey = q == "group"
+	f.quest:SetDesaturated(grey)
+	if grey then f.quest:SetVertexColor(0.75, 0.75, 0.75) else f.quest:SetVertexColor(1, 1, 1) end
+	f.quest:Show()
 end
 PP.QuestIcon = QuestIcon
 
@@ -385,6 +444,25 @@ local function Refresh(f)
 	else f.mark:Hide() end
 end
 
+-- Mob level colours by the Classic rules (WoW Forever's modern client greys mobs out far too early: at level 22 it
+-- showed level 16 mobs grey though they still give experience). Grey = no experience, as Classic works it out.
+local function ClassicGrey(me)
+	if me <= 5 then return 0 end
+	if me <= 39 then return me - math.floor(me / 10) - 5 end
+	return me - math.floor(me / 5) - 1
+end
+local function MobLevelColor(lv)
+	if not (type(issecretvalue) == "function") and GetQuestDifficultyColor then
+		local c = GetQuestDifficultyColor(lv); if c then return c.r, c.g, c.b end   -- Classic Era: the game's own colours
+	end
+	local me = UnitLevel("player") or 1
+	local d = lv - me
+	if d >= 5 then return 1, 0.1, 0.1 end
+	if d >= 3 then return 1, 0.5, 0.25 end
+	if d >= -2 then return 1, 0.82, 0 end
+	if lv > ClassicGrey(me) then return 0.25, 0.75, 0.25 end
+	return 0.5, 0.5, 0.5
+end
 local function Setup(f)
 	local u = f.unit
 	-- WoW Forever names have a second name ("Pint Sunders"), which UnitName leaves off
@@ -404,8 +482,7 @@ local function Setup(f)
 	if lv <= 0 then f.level:SetText("??"); f.level:SetTextColor(1, 0.1, 0.1)
 	else
 		f.level:SetText(lv .. elite)
-		local c = GetQuestDifficultyColor and GetQuestDifficultyColor(lv)
-		if c then f.level:SetTextColor(c.r, c.g, c.b) else f.level:SetTextColor(1, 0.82, 0) end
+		f.level:SetTextColor(MobLevelColor(lv))
 	end
 	QuestIcon(f)
 	Refresh(f)
@@ -626,6 +703,8 @@ ev:RegisterEvent("ADDON_LOADED"); ev:RegisterEvent("PLAYER_LOGIN"); ev:RegisterE
 ev:RegisterEvent("NAME_PLATE_UNIT_ADDED"); ev:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 ev:RegisterEvent("UNIT_FACTION"); ev:RegisterEvent("RAID_TARGET_UPDATE"); ev:RegisterEvent("PLAYER_TARGET_CHANGED")
 ev:RegisterEvent("QUEST_LOG_UPDATE")
+-- a group member's quest progress, or who is in the group, changes the grey ! too
+for _, e in ipairs({ "GROUP_ROSTER_UPDATE", "UNIT_QUEST_LOG_CHANGED" }) do pcall(ev.RegisterEvent, ev, e) end
 if not SECRET then ev:RegisterEvent("UNIT_AURA") end
 local CASTEV = {}
 for _, e in ipairs({ "UNIT_SPELLCAST_START", "UNIT_SPELLCAST_STOP", "UNIT_SPELLCAST_FAILED", "UNIT_SPELLCAST_INTERRUPTED", "UNIT_SPELLCAST_DELAYED",
@@ -668,7 +747,7 @@ ev:SetScript("OnEvent", function(_, e, a1)
 		local f = a1 and active[a1]
 		if f then Debuffs(f) end
 	elseif e == "UNIT_FACTION" then if a1 and a1:find("^nameplate") then Removed(a1); Added(a1) end
-	elseif e == "QUEST_LOG_UPDATE" then
+	elseif e == "QUEST_LOG_UPDATE" or e == "GROUP_ROSTER_UPDATE" or e == "UNIT_QUEST_LOG_CHANGED" then
 		-- fires in bursts; look again once it settles
 		if not questPending then
 			questPending = true
@@ -841,7 +920,7 @@ function PP.ToggleOptions()
 		Check(opt, L, -322, "Keep plates on screen", "onScreen", "Stops plates of close or large mobs sliding off the top of the screen. In tight caves this can bunch a few plates at the screen edge - turn it off if that bothers you.")
 		Stepper(opt, L, -348, "Gap between plates", "spacing", 0.8, 2, 0.1, function(v) return ("%.1f"):format(v) end)
 		Stepper(opt, L, -372, "Distance (yards)", "range", 10, 41, 1, function(v) return tostring(math.floor(v)) .. "  (game max)" end)
-		Check(opt, L, -400, "Quest icon on quest mobs", "showQuest", "A yellow ! beside the level on mobs you still need to kill or loot for a quest.")
+		Check(opt, L, -400, "Quest icon on quest mobs", "showQuest", "A yellow ! beside the level on mobs you still need to kill or loot for a quest. A grey ! when only someone else in your group needs it.")
 
 		-- right column: threat colours
 		local X = 318

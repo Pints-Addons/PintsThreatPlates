@@ -1,5 +1,13 @@
 Pint's Threat Plates - Changelog
 
+v1.3.1
+- Quest icon: a grey ! on mobs that only someone else in your group still needs for a quest. Yellow still means you
+  need it (WoW Forever full names are matched, and solo it's always yellow).
+- WoW Forever: threat colours and the threat % show again when the game hides the threat numbers in a fight.
+- WoW Forever: raid markers show on nameplates again.
+- WoW Forever: mob levels are coloured by the Classic rules - grey only when a mob no longer gives experience
+  (the modern game greyed out level 16 mobs at level 22).
+
 v1.3
 - Your debuffs in a row above each mob's name (WoW Forever: the game's own debuff row, kept up to date in combat).
 - The mob's cast bar under its health bar: icon, spell, time left; grey when it can't be interrupted.

@@ -353,14 +353,36 @@ local function Refresh(f)
 	elseif db.showThreat then
 		f.rank:SetText("")
 	end
+	-- WoW Forever can hide the threat numbers in a fight: the game will still colour the bar from them
+	local hidden
+	if not r and SECRET and not f.friendly and UnitDetailedThreatSituation then
+		local tanking, status, scaled = UnitDetailedThreatSituation("player", u)
+		if IsSecret(tanking) or IsSecret(scaled) then hidden = { tanking, scaled } end
+	end
 	if f.friendly then r, g, b = 0.2, 0.8, 0.2                 -- friendly: always green
 	elseif not r then r, g, b = ReactionColor(u) end
 	f.hp:SetStatusBarColor(r, g, b)
+	if hidden then
+		local tex = f.hp:GetStatusBarTexture()
+		if IsSecret(hidden[1]) and tex and tex.SetVertexColorFromBoolean and CreateColor then
+			-- it's on you / it isn't: the two ends of your threat colours (a tank's are "safe" and "lost")
+			local on, off
+			if IsTank() then on, off = C("safe"), C("lost") else on, off = C("high"), C("low") end
+			pcall(tex.SetVertexColorFromBoolean, tex, hidden[1], CreateColor(on[1], on[2], on[3]), CreateColor(off[1], off[2], off[3]))
+		end
+		if db.showThreat and IsSecret(hidden[2]) then pcall(f.rank.SetFormattedText, f.rank, "%d%%", hidden[2]); f.rank:SetTextColor(1, 1, 1) end
+	end
 	-- your target gets a white edge
 	if db.targetEdge and Known(UnitIsUnit(u, "target")) then f.hp:SetBackdropBorderColor(1, 1, 1, 1) else f.hp:SetBackdropBorderColor(0, 0, 0, 1) end
 	-- raid marker
-	local idx = db.showMarks and Known(GetRaidTargetIndex(u))
-	if idx then SetRaidTargetIconTexture(f.mark, idx); f.mark:Show() else f.mark:Hide() end
+	local idx = db.showMarks and GetRaidTargetIndex(u)
+	if IsSecret(idx) then
+		-- WoW Forever hides which marker it is: the game can still draw the matching icon from it
+		f.mark:SetTexCoord(0, 1, 0, 1)
+		if pcall(function() f.mark:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. idx) end) then f.mark:Show() else f.mark:Hide() end
+	elseif idx then
+		f.mark:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons"); SetRaidTargetIconTexture(f.mark, idx); f.mark:Show()
+	else f.mark:Hide() end
 end
 
 local function Setup(f)
@@ -866,7 +888,22 @@ SLASH_PINTSPLATES2 = "/pintsplates"
 SLASH_PINTSPLATES3 = "/threatplates"
 SlashCmdList.PINTSPLATES = function(msg)
 	msg = (msg or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
-	if msg == "tank" then
+	if msg == "mark" then
+		-- what the game tells add-ons about your target's raid marker (for checking the marker icons)
+		local idx = GetRaidTargetIndex("target")
+		local secret = IsSecret(idx)
+		local ok, err = pcall(function() PP.testTex = PP.testTex or UIParent:CreateTexture(); PP.testTex:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. idx) end)
+		Print(("target marker: %s, icon from it %s"):format(secret and "hidden" or tostring(idx), ok and "works" or ("fails - " .. tostring(err))))
+		return
+	elseif msg == "threat" then
+		-- what the game tells add-ons about your target's threat (for checking the colours)
+		local a, b, c, d, e = UnitDetailedThreatSituation("player", "target")
+		local function S(v) return (IsSecret(v) and "hidden") or tostring(v) end
+		PP.testTex = PP.testTex or UIParent:CreateTexture()
+		Print(("target threat - tanking %s, status %s, %% %s, value %s; in combat %s; colour by boolean %s"):format(S(a), S(b), S(c), S(e),
+			S(UnitAffectingCombat("target")), tostring(PP.testTex.SetVertexColorFromBoolean ~= nil)))
+		return
+	elseif msg == "tank" then
 		db.tank = (db.tank == "auto" and "on") or (db.tank == "on" and "off") or "auto"
 		Print("tank colours: " .. ({ auto = "automatic (Defensive Stance, Bear Form, Righteous Fury)", on = "always", off = "never" })[db.tank] .. ".")
 	elseif msg == "off-threatplates" then PP.OffThreatPlates()

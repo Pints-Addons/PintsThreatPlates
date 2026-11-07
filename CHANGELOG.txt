@@ -1,5 +1,8 @@
 Pint's Threat Plates - Changelog
 
+v1.3.3
+- A mob tagged by someone else now turns grey even while it's fighting you (the threat colour used to win).
+
 v1.3.2
 - WoW Forever: raid markers show again. The game hides which marker a mob has from add-ons, so the plate now keeps
   Blizzard's own marker icon visible (the game draws it correctly) and moves it beside the name. /pn mark reports

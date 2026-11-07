@@ -174,7 +174,6 @@ local function ThreatScore(unit)
 end
 
 local function ReactionColor(unit)
-	if UnitIsTapDenied and UnitIsTapDenied(unit) then return unpack(C("tapped")) end
 	if UnitIsPlayer(unit) then
 		local _, cls = UnitClass(unit)
 		local c = Known(cls) and RAID_CLASS_COLORS[cls]
@@ -436,6 +435,9 @@ local function Refresh(f)
 	end
 	-- colour: threat in a fight, otherwise reaction
 	local r, g, b = ThreatColor(u)
+	-- tagged by someone else (no loot or experience for you): grey, whatever the threat says
+	local denied = UnitIsTapDenied and Known(UnitIsTapDenied(u))
+	if denied then r, g, b = unpack(C("tapped")) end
 	f.score = ThreatScore(u)
 	local tp = db.showThreat and ThreatPct(u)
 	if tp then
@@ -446,7 +448,7 @@ local function Refresh(f)
 	end
 	-- WoW Forever can hide the threat numbers in a fight: the game will still colour the bar from them
 	local hidden
-	if not r and SECRET and not f.friendly and UnitDetailedThreatSituation then
+	if not r and not denied and SECRET and not f.friendly and UnitDetailedThreatSituation then
 		local tanking, status, scaled = UnitDetailedThreatSituation("player", u)
 		if IsSecret(tanking) or IsSecret(scaled) then hidden = { tanking, scaled } end
 	end
@@ -462,6 +464,15 @@ local function Refresh(f)
 			pcall(tex.SetVertexColorFromBoolean, tex, hidden[1], CreateColor(on[1], on[2], on[3]), CreateColor(off[1], off[2], off[3]))
 		end
 		if db.showThreat and IsSecret(hidden[2]) then pcall(f.rank.SetFormattedText, f.rank, "%d%%", hidden[2]); f.rank:SetTextColor(1, 1, 1) end
+	end
+	-- WoW Forever may hide whether it's tagged by someone else: the game can still pick grey from that itself
+	if not denied and not hidden and not f.friendly and UnitIsTapDenied then
+		local td = UnitIsTapDenied(u)
+		local tex = f.hp:GetStatusBarTexture()
+		if IsSecret(td) and tex and tex.SetVertexColorFromBoolean and CreateColor then
+			local t = C("tapped")
+			pcall(tex.SetVertexColorFromBoolean, tex, td, CreateColor(t[1], t[2], t[3]), CreateColor(r, g, b))
+		end
 	end
 	-- your target gets a white edge
 	if db.targetEdge and Known(UnitIsUnit(u, "target")) then f.hp:SetBackdropBorderColor(1, 1, 1, 1) else f.hp:SetBackdropBorderColor(0, 0, 0, 1) end

@@ -1,5 +1,8 @@
 Pint's Threat Plates - Changelog
 
+v1.3.5
+- WoW Forever: mob cast bars fill smoothly (the game now runs them from the cast's own timer).
+
 v1.3.4
 - A grey (tagged) mob you have threat on gets a bold red edge, so you can see it's after you.
 - Fixed "attempt to index field 'quest'" errors (and missing debuffs) when an old copy of the add-on was also

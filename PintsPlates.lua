@@ -664,7 +664,7 @@ local function MakeCast(f)
 	c.time = c:CreateFontString(nil, "OVERLAY", "PintsPlatesBar"); c.time:SetPoint("RIGHT", -2, 0)
 	c:Hide()
 	c:SetScript("OnUpdate", function(self)
-		self:SetValue(GetTime() * 1000)
+		if not self.timed then self:SetValue(GetTime() * 1000) end
 		if self.endMS then local left = self.endMS / 1000 - GetTime(); self.time:SetText(left > 0 and ("%.1f"):format(left) or "") end
 	end)
 	f.cast = c
@@ -679,7 +679,20 @@ local function Cast(f)
 	local name, _, tex, s, e, _, _, noInt = UnitCastingInfo(u)
 	if not Has(name) then name, _, tex, s, e, _, noInt = UnitChannelInfo(u); channel = Has(name) end
 	if not (Has(name) and Has(s) and Has(e)) then c:Hide(); return end
-	c:SetMinMaxValues(s, e)                       -- the game accepts these even when it keeps them hidden from add-ons
+	-- WoW Forever: the game runs the bar itself from the cast's own timer - smooth, and right even when it hides the
+	-- times from add-ons. (Elsewhere: filled each frame from the start and end times.)
+	c.timed = nil
+	local durFn = channel and UnitChannelDuration or UnitCastingDuration
+	if c.SetTimerDuration and durFn then
+		local okD, dur = pcall(durFn, u)
+		if okD and dur then
+			local I = Enum and Enum.StatusBarInterpolation
+			local D = Enum and Enum.StatusBarTimerDirection
+			local okT = pcall(c.SetTimerDuration, c, dur, I and I.Immediate or 0, D and (channel and D.RemainingTime or D.ElapsedTime) or (channel and 1 or 0))
+			if okT then c.timed = true end
+		end
+	end
+	if not c.timed then c:SetMinMaxValues(s, e) end   -- the game accepts these even when it keeps them hidden from add-ons
 	c.name:SetText(name); c.icon:SetTexture(tex)
 	local shut = (not IsSecret(noInt)) and noInt
 	if shut then c:SetStatusBarColor(0.6, 0.6, 0.6)

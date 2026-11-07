@@ -219,6 +219,12 @@ local function Build(plate)
 	f.hp:SetBackdrop({ bgFile = "Interface\\Buttons\\WHITE8X8", edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 1 })
 	f.hp:SetBackdropColor(0, 0, 0, 0.6)
 	f.hp:SetBackdropBorderColor(0, 0, 0, 1)
+	-- a bold red edge: a mob tagged by someone else (grey) that you're on the threat list of
+	f.tapEdge = CreateFrame("Frame", nil, f, "BackdropTemplate")
+	f.tapEdge:SetPoint("TOPLEFT", f.hp, "TOPLEFT", -3, 3); f.tapEdge:SetPoint("BOTTOMRIGHT", f.hp, "BOTTOMRIGHT", 3, -3)
+	f.tapEdge:SetFrameLevel(f.hp:GetFrameLevel() + 3)
+	f.tapEdge:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 3 })
+	f.tapEdge:SetBackdropBorderColor(1, 0.1, 0.1, 1); f.tapEdge:Hide()
 	f.text = f.hp:CreateFontString(nil, "OVERLAY", "PintsPlatesBar"); f.text:SetPoint("CENTER", 0, 0)
 	f.name = f:CreateFontString(nil, "OVERLAY", "PintsPlatesName")
 	f.name:SetPoint("BOTTOM", f, "TOP", 0, 2); f.name:SetWordWrap(false)
@@ -237,7 +243,7 @@ local function Build(plate)
 	f.quest = f:CreateTexture(nil, "OVERLAY")
 	f.quest:SetSize(14, 14)
 	f.quest:SetTexture("Interface\\GossipFrame\\AvailableQuestIcon"); f.quest:Hide()
-	plate.PintsPlate = f
+	plate.PintsThreatPlate = f       -- (its own name: an old copy of this add-on used "PintsPlate" and the two mixed up)
 	built[#built + 1] = f
 	Layout(f)
 	return f
@@ -352,6 +358,7 @@ local function IsQuestMob(u)
 	return r or false
 end
 local function QuestIcon(f)
+	if not f.quest then return end      -- (a plate frame another add-on made)
 	if not db.showQuest or not f.unit then f.quest:Hide(); return end
 	local ok, q = pcall(IsQuestMob, f.unit)
 	if not ok or not q then f.quest:Hide(); return end
@@ -438,6 +445,13 @@ local function Refresh(f)
 	-- tagged by someone else (no loot or experience for you): grey, whatever the threat says
 	local denied = UnitIsTapDenied and Known(UnitIsTapDenied(u))
 	if denied then r, g, b = unpack(C("tapped")) end
+	-- tagged by someone else but you've got threat on it (it's after you, or you've hit it): bold red edge
+	local onList
+	if denied and UnitDetailedThreatSituation then
+		local _, status = Threat("player", u)
+		onList = status ~= nil or Known(UnitIsUnit(u .. "target", "player")) or false
+	end
+	if f.tapEdge then f.tapEdge:SetShown(onList and true or false) end
 	f.score = ThreatScore(u)
 	local tp = db.showThreat and ThreatPct(u)
 	if tp then
@@ -560,7 +574,7 @@ local function Sweep(frame, hide, depth)
 end
 local function HideBlizzard(plate, hide)
 	for _, child in ipairs({ plate:GetChildren() }) do
-		if child ~= plate.PintsPlate and not (child.IsForbidden and child:IsForbidden()) then Fade(child, hide); Sweep(child, hide, 1) end
+		if child ~= plate.PintsThreatPlate and not (child.IsForbidden and child:IsForbidden()) then Fade(child, hide); Sweep(child, hide, 1) end
 	end
 	for _, r in ipairs({ plate:GetRegions() }) do r:SetAlpha(hide and 0 or 1) end
 end
@@ -683,16 +697,16 @@ local function Added(unit)
 	local friendly = not UnitCanAttack("player", unit)
 	if friendly and not db.friendly then
 		HideBlizzard(plate, false)
-		if plate.PintsPlate then plate.PintsPlate:Hide() end
+		if plate.PintsThreatPlate then plate.PintsThreatPlate:Hide() end
 		active[unit] = nil
 		return
 	end
-	local f = plate.PintsPlate or Build(plate)
+	local f = plate.PintsThreatPlate or Build(plate)
 	f.friendly = friendly
 	if not f.cast then MakeCast(f) end
 	f.unit = unit
 	HideBlizzard(plate, true)
-	C_Timer.After(0, function() if plate.PintsPlate == f and f.unit == unit then HideBlizzard(plate, true) end end)
+	C_Timer.After(0, function() if plate.PintsThreatPlate == f and f.unit == unit then HideBlizzard(plate, true) end end)
 	f:Show()
 	active[unit] = f
 	Setup(f)

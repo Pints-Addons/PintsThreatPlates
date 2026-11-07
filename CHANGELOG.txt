@@ -1,5 +1,10 @@
 Pint's Threat Plates - Changelog
 
+v1.3.2
+- WoW Forever: raid markers show again. The game hides which marker a mob has from add-ons, so the plate now keeps
+  Blizzard's own marker icon visible (the game draws it correctly) and moves it beside the name. /pn mark reports
+  what it finds on your target's plate.
+
 v1.3.1
 - Quest icon: a grey ! on mobs that only someone else in your group still needs for a quest. Yellow still means you
   need it (WoW Forever full names are matched, and solo it's always yellow).

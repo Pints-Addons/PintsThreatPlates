@@ -385,6 +385,38 @@ local function SecretHealth(f, u, hp, max)
 	elseif not (pct and SecretText(f.text, "%s/%s | %.0f%%", a, b, pct)) then SecretText(f.text, "%s/%s", a, b) end
 end
 
+-- WoW Forever hides which raid marker a mob has, so our own icon can't be picked. Blizzard's plate has its own marker
+-- icon, which the game keeps right: that one is kept visible (the rest of Blizzard's plate stays see-through) and moved
+-- to where ours goes. Returns true when it's doing the job.
+local function BlizzMark(plate)
+	local uf = plate and plate.UnitFrame
+	if not uf then return end
+	return uf.RaidTargetFrame or uf.raidTargetIcon or uf.RaidTargetIcon
+end
+local function ModernMark(f)
+	local plate = f.unit and C_NamePlate.GetNamePlateForUnit(f.unit)
+	local rt = plate and BlizzMark(plate)
+	if not rt or (rt.IsForbidden and rt:IsForbidden()) then return false end
+	local ok = pcall(function()
+		if db.showMarks then
+			rt.ppHide, rt.ppKeep = nil, true
+			if rt.SetIgnoreParentAlpha then rt:SetIgnoreParentAlpha(true) end
+			rt.ppBusy = true; rt:SetAlpha(1); rt.ppBusy = nil
+			if rt.SetParent and rt:GetParent() ~= f then rt.ppOldParent = rt.ppOldParent or rt:GetParent() end
+			rt:ClearAllPoints()
+			if db.showName then rt:SetPoint("RIGHT", f.name, "LEFT", -2, 0) else rt:SetPoint("BOTTOM", f, "TOP", 0, 2) end
+			if rt.SetSize then rt:SetSize(16, 16) end
+			if rt.RaidTargetIcon and rt.RaidTargetIcon.SetAllPoints then rt.RaidTargetIcon:SetAllPoints(rt) end
+			if rt.SetFrameLevel then rt:SetFrameLevel(f:GetFrameLevel() + 5) end
+		else
+			rt.ppKeep = nil
+			if rt.SetIgnoreParentAlpha then rt:SetIgnoreParentAlpha(false) end
+		end
+	end)
+	return ok
+end
+PP.ModernMark = ModernMark
+
 local function Refresh(f)
 	local u = f.unit
 	if not u or not UnitExists(u) then return end
@@ -435,7 +467,9 @@ local function Refresh(f)
 	if db.targetEdge and Known(UnitIsUnit(u, "target")) then f.hp:SetBackdropBorderColor(1, 1, 1, 1) else f.hp:SetBackdropBorderColor(0, 0, 0, 1) end
 	-- raid marker
 	local idx = db.showMarks and GetRaidTargetIndex(u)
-	if IsSecret(idx) then
+	if SECRET and ModernMark(f) then
+		f.mark:Hide()                     -- (Blizzard's own marker icon is showing in its place)
+	elseif IsSecret(idx) then
 		-- WoW Forever hides which marker it is: the game can still draw the matching icon from it
 		f.mark:SetTexCoord(0, 1, 0, 1)
 		if pcall(function() f.mark:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. idx) end) then f.mark:Show() else f.mark:Hide() end
@@ -509,7 +543,7 @@ local function Sweep(frame, hide, depth)
 		if r.IsIgnoringParentAlpha and Known(r:IsIgnoringParentAlpha()) then r:SetAlpha(hide and 0 or 1) end
 	end
 	for _, c in ipairs({ frame:GetChildren() }) do
-		if c.IsIgnoringParentAlpha and Known(c:IsIgnoringParentAlpha()) and not (c.ppMine and db.showDebuffs) then Fade(c, hide) end
+		if c.IsIgnoringParentAlpha and Known(c:IsIgnoringParentAlpha()) and not (c.ppMine and db.showDebuffs) and not (c.ppKeep and db.showMarks) then Fade(c, hide) end
 		Sweep(c, hide, depth + 1)
 	end
 end
@@ -973,6 +1007,9 @@ SlashCmdList.PINTSPLATES = function(msg)
 		local secret = IsSecret(idx)
 		local ok, err = pcall(function() PP.testTex = PP.testTex or UIParent:CreateTexture(); PP.testTex:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcon_" .. idx) end)
 		Print(("target marker: %s, icon from it %s"):format(secret and "hidden" or tostring(idx), ok and "works" or ("fails - " .. tostring(err))))
+		local plate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target")
+		local rt = plate and BlizzMark(plate)
+		Print("Blizzard's marker on the target's plate: " .. (rt and ((rt.GetName and rt:GetName()) or "found") or (plate and "not found" or "no plate (is it on screen?)")))
 		return
 	elseif msg == "threat" then
 		-- what the game tells add-ons about your target's threat (for checking the colours)

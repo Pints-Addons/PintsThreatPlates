@@ -207,7 +207,7 @@ local function Layout(f)
 	f.arrow:ClearAllPoints()
 	if db.showThreat then f.arrow:SetPoint("RIGHT", f.rank, "LEFT", -1, 0) else f.arrow:SetPoint("RIGHT", f, "LEFT", -2, 0) end
 	f.mark:ClearAllPoints()
-	if db.showName then f.mark:SetPoint("RIGHT", f.name, "LEFT", -2, 0) else f.mark:SetPoint("BOTTOM", f, "TOP", 0, 2) end
+	local ma, my = PP.MarkSpot(f); f.mark:SetPoint("BOTTOM", ma, "TOP", 0, my)
 end
 
 local function Build(plate)
@@ -237,7 +237,7 @@ local function Build(plate)
 	f.arrow:SetSize(12, 12)
 	f.arrow:SetTexture("Interface\\Buttons\\Arrow-Up-Up"); f.arrow:SetDesaturated(true); f.arrow:Hide()
 	f.mark = f:CreateTexture(nil, "OVERLAY")
-	f.mark:SetSize(14, 14)
+	f.mark:SetSize(56, 56)
 	f.mark:SetTexture("Interface\\TargetingFrame\\UI-RaidTargetingIcons"); f.mark:Hide()
 	-- quest mob: something you still need to kill or loot for a quest
 	f.quest = f:CreateTexture(nil, "OVERLAY")
@@ -399,6 +399,11 @@ local function BlizzMark(plate)
 	if not uf then return end
 	return uf.RaidTargetFrame or uf.raidTargetIcon or uf.RaidTargetIcon
 end
+-- the raid marker: big, centred above the plate (above the name, and above the debuff row when that's on)
+function PP.MarkSpot(f)
+	local a = (db.showName and f.name) or f
+	return a, (db.showDebuffs and 26 or 2)
+end
 local function ModernMark(f)
 	local plate = f.unit and C_NamePlate.GetNamePlateForUnit(f.unit)
 	local rt = plate and BlizzMark(plate)
@@ -410,8 +415,8 @@ local function ModernMark(f)
 			rt.ppBusy = true; rt:SetAlpha(1); rt.ppBusy = nil
 			if rt.SetParent and rt:GetParent() ~= f then rt.ppOldParent = rt.ppOldParent or rt:GetParent() end
 			rt:ClearAllPoints()
-			if db.showName then rt:SetPoint("RIGHT", f.name, "LEFT", -2, 0) else rt:SetPoint("BOTTOM", f, "TOP", 0, 2) end
-			if rt.SetSize then rt:SetSize(16, 16) end
+			local ma, my = PP.MarkSpot(f); rt:SetPoint("BOTTOM", ma, "TOP", 0, my)
+			if rt.SetSize then rt:SetSize(56, 56) end
 			if rt.RaidTargetIcon and rt.RaidTargetIcon.SetAllPoints then rt.RaidTargetIcon:SetAllPoints(rt) end
 			if rt.SetFrameLevel then rt:SetFrameLevel(f:GetFrameLevel() + 5) end
 		else

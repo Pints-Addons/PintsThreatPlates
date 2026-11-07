@@ -1,5 +1,8 @@
 Pint's Threat Plates - Changelog
 
+v1.3.6
+- Raid markers are four times bigger and sit centred above the plate (above the name and the debuff row).
+
 v1.3.5
 - WoW Forever: mob cast bars fill smoothly (the game now runs them from the cast's own timer).
 

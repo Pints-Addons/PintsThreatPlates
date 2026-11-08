@@ -721,6 +721,11 @@ local function Added(unit)
 	end
 	local f = plate.PintsThreatPlate or Build(plate)
 	f.friendly = friendly
+	-- WoW Forever: plates keep apart by the size of a frame on each plate - the game's own health bar unless told
+	-- otherwise, and that's hidden here, so they piled on top of each other. Ours is the one to keep apart.
+	if plate.SetStackingBoundsFrame and plate.pintsBounds ~= f then
+		if pcall(plate.SetStackingBoundsFrame, plate, f) then plate.pintsBounds = f end
+	end
 	if not f.cast then MakeCast(f) end
 	f.unit = unit
 	HideBlizzard(plate, true)
@@ -756,6 +761,8 @@ function PP.Stacking()
 	end
 	local h = db.height + (db.showName and (db.nameSize + 4) or 2) + 4
 	if C_NamePlate and C_NamePlate.SetNamePlateEnemySize then pcall(C_NamePlate.SetNamePlateEnemySize, db.width + 16, h) end
+	-- (the newer clients have one size for all plates)
+	if C_NamePlate and C_NamePlate.SetNamePlateSize then pcall(C_NamePlate.SetNamePlateSize, db.width + 16, h) end
 end
 
 function PP.ApplyAll()

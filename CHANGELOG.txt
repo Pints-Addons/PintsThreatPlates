@@ -1,5 +1,9 @@
 Pint's Threat Plates - Changelog
 
+v1.3.7
+- WoW Forever: plates stack again instead of piling on top of each other (the game was keeping apart the health bars
+  Pint's Threat Plates hides, not its own plates).
+
 v1.3.6
 - Raid markers are four times bigger and sit centred above the plate (above the name and the debuff row).
 

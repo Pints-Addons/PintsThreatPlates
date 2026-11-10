@@ -20,7 +20,7 @@ local DEFAULT_COLORS = {
 local DEFAULTS = {
 	tank = "auto", tankFlip = false, steps = 10,
 	width = 150, height = 20, nameSize = 12, textSize = 10,
-	showName = true, showLevel = true, healthText = "both", showThreat = true, showArrows = true, showMarks = true, targetEdge = true, showQuest = true, showDebuffs = true, showCast = true, friendly = false, firstName = false,
+	showName = true, showLevel = true, healthText = "both", showThreat = true, showArrows = true, showMarks = true, targetEdge = true, targetScale = 1.25, showQuest = true, showDebuffs = true, showCast = true, friendly = false, firstName = false,
 	stack = true, onScreen = true, spacing = 1.1, range = 41,
 	minimap = {},
 }
@@ -225,6 +225,12 @@ local function Build(plate)
 	f.tapEdge:SetFrameLevel(f.hp:GetFrameLevel() + 3)
 	f.tapEdge:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 3 })
 	f.tapEdge:SetBackdropBorderColor(1, 0.1, 0.1, 1); f.tapEdge:Hide()
+	-- your target: a bright edge round the bar (on top of the others)
+	f.tgtEdge = CreateFrame("Frame", nil, f, "BackdropTemplate")
+	f.tgtEdge:SetPoint("TOPLEFT", f.hp, "TOPLEFT", -2, 2); f.tgtEdge:SetPoint("BOTTOMRIGHT", f.hp, "BOTTOMRIGHT", 2, -2)
+	f.tgtEdge:SetFrameLevel(f.hp:GetFrameLevel() + 4)
+	f.tgtEdge:SetBackdrop({ edgeFile = "Interface\\Buttons\\WHITE8X8", edgeSize = 2 })
+	f.tgtEdge:SetBackdropBorderColor(1, 1, 1, 1); f.tgtEdge:Hide()
 	f.text = f.hp:CreateFontString(nil, "OVERLAY", "PintsPlatesBar"); f.text:SetPoint("CENTER", 0, 0)
 	f.name = f:CreateFontString(nil, "OVERLAY", "PintsPlatesName")
 	f.name:SetPoint("BOTTOM", f, "TOP", 0, 2); f.name:SetWordWrap(false)
@@ -493,8 +499,12 @@ local function Refresh(f)
 			pcall(tex.SetVertexColorFromBoolean, tex, td, CreateColor(t[1], t[2], t[3]), CreateColor(r, g, b))
 		end
 	end
-	-- your target gets a white edge
-	if db.targetEdge and Known(UnitIsUnit(u, "target")) then f.hp:SetBackdropBorderColor(1, 1, 1, 1) else f.hp:SetBackdropBorderColor(0, 0, 0, 1) end
+	-- your target: bigger, with a white edge
+	local isT = Known(UnitIsUnit(u, "target")) and true or false
+	if db.targetEdge and isT then f.hp:SetBackdropBorderColor(1, 1, 1, 1) else f.hp:SetBackdropBorderColor(0, 0, 0, 1) end
+	if f.tgtEdge then f.tgtEdge:SetShown(db.targetEdge and isT) end
+	local sc = isT and (db.targetScale or 1.25) or 1
+	if f.tgtScale ~= sc then f:SetScale(sc); f.tgtScale = sc end
 	-- raid marker
 	local idx = db.showMarks and GetRaidTargetIndex(u)
 	if SECRET and ModernMark(f) then
@@ -987,6 +997,7 @@ function PP.ToggleOptions()
 		Check(opt, L + 140, -74, "Threat arrows", "showArrows", "Red up arrow on your highest-threat mob, green down arrow on your lowest.")
 		Check(opt, L, -96, "Raid markers", "showMarks")
 		Check(opt, L + 140, -96, "White edge on target", "targetEdge")
+		Stepper(opt, 318, -398, "Target plate size", "targetScale", 1, 2, 0.05, function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end)
 		Check(opt, L, -422, "Your debuffs above the name", "showDebuffs", "Icons for your own debuffs on each mob, in a row above its name.")
 		Check(opt, L + 200, -422, "Cast bar", "showCast", "The mob's cast bar, under its health bar.")
 		Check(opt, L, -444, "Friendly plates (green)", "friendly", "Players and others on your side get these plates too, with a green health bar, instead of the game's own. Turn on friendly nameplates in game (Shift-V) to see them.")

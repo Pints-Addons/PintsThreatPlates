@@ -195,6 +195,11 @@ local function Layout(f)
 	-- centre the whole plate (name + bar) on the plate box so neighbours stack cleanly
 	local nameH = db.showName and (db.nameSize + 2) or 0
 	f:ClearAllPoints(); f:SetPoint("CENTER", f:GetParent(), "CENTER", 0, -nameH / 2)
+	-- what WoW Forever keeps apart when stacking: the whole plate - name and bar, with a little gap - not just the
+	-- bar (with only the bar, the next plate's name and bar landed on this one). It grows with your target's plate.
+	if not f.bounds then f.bounds = CreateFrame("Frame", nil, f) end
+	f.bounds:ClearAllPoints(); f.bounds:SetPoint("BOTTOM", f, "BOTTOM", 0, -2)
+	f.bounds:SetSize(db.width + 4, db.height + nameH + 6)
 	f.name:SetWidth(db.width + 40)
 	f.name:SetShown(db.showName); f.level:SetShown(db.showLevel); f.rank:SetShown(db.showThreat)
 	f.text:SetShown(db.healthText ~= "none")
@@ -503,7 +508,9 @@ local function Refresh(f)
 	local isT = Known(UnitIsUnit(u, "target")) and true or false
 	if db.targetEdge and isT then f.hp:SetBackdropBorderColor(1, 1, 1, 1) else f.hp:SetBackdropBorderColor(0, 0, 0, 1) end
 	if f.tgtEdge then f.tgtEdge:SetShown(db.targetEdge and isT) end
-	local sc = isT and (db.targetScale or 1.25) or 1
+	-- (where the game can size the target's plate itself, it does - then stacking makes room for the bigger plate.
+	-- Only on clients without that is our part of the plate scaled, and there it can overlap its neighbours.)
+	local sc = (isT and not PP.gameScale) and (db.targetScale or 1.25) or 1
 	if f.tgtScale ~= sc then f:SetScale(sc); f.tgtScale = sc end
 	-- raid marker
 	local idx = db.showMarks and GetRaidTargetIndex(u)
@@ -537,12 +544,29 @@ local function MobLevelColor(lv)
 	if lv > ClassicGrey(me) then return 0.25, 0.75, 0.25 end
 	return 0.5, 0.5, 0.5
 end
-local function Setup(f)
+-- the mob's name; the game says "Unknown" until it has loaded the name, so look again shortly when it does
+local function SetName(f)
 	local u = f.unit
+	if not u then return end
 	-- WoW Forever names have a second name ("Pint Sunders"), which UnitName leaves off
 	local ok, full = false, nil
 	if GetUnitName and not db.firstName then ok, full = pcall(GetUnitName, u, false) end    -- ("First names only" leaves it off)
-	f.name:SetText((ok and full) or UnitName(u) or "")
+	local name = (ok and full) or UnitName(u) or ""
+	f.name:SetText(name)
+	local unknown = not IsSecret(name) and (name == "" or name == (UNKNOWNOBJECT or "Unknown") or name == "Unknown")
+	if unknown then
+		f.nameTries = (f.nameTries or 0) + 1
+		if f.nameTries <= 10 then
+			local unit = u
+			C_Timer.After(0.5, function() if f.unit == unit then SetName(f) end end)
+		end
+	else f.nameTries = nil end
+end
+PP.SetName = SetName
+local function Setup(f)
+	local u = f.unit
+	f.nameTries = nil
+	SetName(f)
 	if UnitIsPlayer(u) then
 		local _, cls = UnitClass(u)
 		local c = Known(cls) and RAID_CLASS_COLORS[cls]
@@ -598,7 +622,8 @@ end
 -- Classic Era: our own icons, read from the mob's debuffs (yours only), with the time left as a sweep.
 -- WoW Forever: add-ons can't read a mob's auras in combat there, so instead Blizzard's own debuff row on the plate
 -- (which the game keeps up to date, in combat too) is kept visible and moved above our name.
-local MAXD, DSIZE = 6, 20
+local MAXD, DSIZE = 6, 26
+local DSCALE = 1.35       -- (WoW Forever: Blizzard's debuff row, drawn this much bigger)
 local function DebuffAnchor(f) if db.showName then return f.name, "TOP", 3 end return f, "TOP", 4 end
 local function ClassicDebuffs(f)
 	f.debuffs = f.debuffs or {}
@@ -648,12 +673,14 @@ local function ModernDebuffs(f, plate)
 			af.ppHide = nil
 			if af.SetIgnoreParentAlpha then af:SetIgnoreParentAlpha(true) end
 			af.ppBusy = true; af:SetAlpha(1); af.ppBusy = nil
+			if af.SetScale and af.ppScale ~= DSCALE then af.ppBase = af.ppBase or af:GetScale(); af:SetScale(af.ppBase * DSCALE); af.ppScale = DSCALE end
 			local a, p, y = DebuffAnchor(f)
 			af:ClearAllPoints(); af:SetPoint("BOTTOM", a, p, 0, y)
 			af.ppMine = true
 		elseif af.ppMine then
 			af.ppMine = nil
 			if af.SetIgnoreParentAlpha then af:SetIgnoreParentAlpha(false) end
+			if af.ppBase then af:SetScale(af.ppBase); af.ppBase, af.ppScale = nil, nil end
 		end
 	end)
 end
@@ -733,8 +760,10 @@ local function Added(unit)
 	f.friendly = friendly
 	-- WoW Forever: plates keep apart by the size of a frame on each plate - the game's own health bar unless told
 	-- otherwise, and that's hidden here, so they piled on top of each other. Ours is the one to keep apart.
-	if plate.SetStackingBoundsFrame and plate.pintsBounds ~= f then
-		if pcall(plate.SetStackingBoundsFrame, plate, f) then plate.pintsBounds = f end
+	if not f.bounds then Layout(f) end
+	local box = f.bounds or f
+	if plate.SetStackingBoundsFrame and plate.pintsBounds ~= box then
+		if pcall(plate.SetStackingBoundsFrame, plate, box) then plate.pintsBounds = box end
 	end
 	if not f.cast then MakeCast(f) end
 	f.unit = unit
@@ -769,6 +798,9 @@ function PP.Stacking()
 		pcall(SetCVar, "nameplateOtherTopInset", -1); pcall(SetCVar, "nameplateLargeTopInset", -1)
 		pcall(SetCVar, "nameplateOtherBottomInset", -1); pcall(SetCVar, "nameplateLargeBottomInset", -1)
 	end
+	-- your target's plate: sized by the game ("selected scale"), so stacking keeps the others clear of it
+	PP.gameScale = GetCVar("nameplateSelectedScale") ~= nil and pcall(SetCVar, "nameplateSelectedScale", db.targetScale or 1.25) or false
+	for _, f in pairs(active) do f.tgtScale = nil end
 	local h = db.height + (db.showName and (db.nameSize + 4) or 2) + 4
 	if C_NamePlate and C_NamePlate.SetNamePlateEnemySize then pcall(C_NamePlate.SetNamePlateEnemySize, db.width + 16, h) end
 	-- (the newer clients have one size for all plates)
@@ -797,6 +829,7 @@ ev:RegisterEvent("ADDON_LOADED"); ev:RegisterEvent("PLAYER_LOGIN"); ev:RegisterE
 ev:RegisterEvent("NAME_PLATE_UNIT_ADDED"); ev:RegisterEvent("NAME_PLATE_UNIT_REMOVED")
 ev:RegisterEvent("UNIT_FACTION"); ev:RegisterEvent("RAID_TARGET_UPDATE"); ev:RegisterEvent("PLAYER_TARGET_CHANGED")
 ev:RegisterEvent("QUEST_LOG_UPDATE")
+pcall(ev.RegisterEvent, ev, "UNIT_NAME_UPDATE")
 -- a group member's quest progress, or who is in the group, changes the grey ! too
 for _, e in ipairs({ "GROUP_ROSTER_UPDATE", "UNIT_QUEST_LOG_CHANGED" }) do pcall(ev.RegisterEvent, ev, e) end
 if not SECRET then ev:RegisterEvent("UNIT_AURA") end
@@ -834,6 +867,9 @@ ev:SetScript("OnEvent", function(_, e, a1)
 	elseif e == "PLAYER_REGEN_ENABLED" then if PP.pending then PP.pending = nil; PP.Stacking() end
 	elseif e == "NAME_PLATE_UNIT_ADDED" then Added(a1)
 	elseif e == "NAME_PLATE_UNIT_REMOVED" then Removed(a1)
+	elseif e == "UNIT_NAME_UPDATE" then
+		local f = a1 and active[a1]
+		if f then SetName(f) end
 	elseif CASTEV[e] then
 		local f = a1 and active[a1]
 		if f then pcall(Cast, f) end
@@ -1079,6 +1115,46 @@ SlashCmdList.PINTSPLATES = function(msg)
 		PP.testTex = PP.testTex or UIParent:CreateTexture()
 		Print(("target threat - tanking %s, status %s, %% %s, value %s; in combat %s; colour by boolean %s"):format(S(a), S(b), S(c), S(e),
 			S(UnitAffectingCombat("target")), tostring(PP.testTex.SetVertexColorFromBoolean ~= nil)))
+		return
+	elseif msg == "hitbox" then
+		-- (saved for reading outside the game: every nameplate / stacking setting this game version has, and its value)
+		local probe = { when = date(), cvars = {}, methods = {} }
+		local all = C_Console and C_Console.GetAllCommands and C_Console.GetAllCommands() or {}
+		for _, c in ipairs(all) do
+			local n = c.command
+			if type(n) == "string" and (n:lower():find("nameplate") or n:lower():find("stack")) then probe.cvars[n] = tostring(GetCVar(n)) end
+		end
+		local tp = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target")
+		local pmt = tp and getmetatable(tp)
+		if pmt and type(pmt.__index) == "table" then for k in pairs(pmt.__index) do if type(k) == "string" then probe.methods[#probe.methods + 1] = k end end end
+		for k, v in pairs(C_NamePlate or {}) do probe.methods[#probe.methods + 1] = "C_NamePlate." .. k end
+		table.sort(probe.methods)
+		probe.bounds = tp and tostring(tp.pintsBounds ~= nil) or "no target plate"
+		PintsPlatesDB.probe = probe
+		Print("saved the nameplate settings for Claude - /reload to write them out.")
+		-- what decides where a plate can be clicked on this game version (for making the click area cover the bar)
+		local names = {}
+		for k, v in pairs(C_NamePlate or {}) do if type(v) == "function" then names[#names + 1] = k end end
+		table.sort(names)
+		Print("C_NamePlate: " .. table.concat(names, ", "))
+		local plate = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target")
+		if not plate then Print("target a mob whose plate is on screen, then /pn hitbox again."); return end
+		local function N(v) return IsSecret(v) and "hidden" or (type(v) == "number" and ("%.0f"):format(v)) or tostring(v) end
+		local f = plate.PintsThreatPlate
+		local pw, ph = plate:GetSize()
+		Print(("plate %s x %s (scale %s)   ours %s x %s"):format(N(pw), N(ph), N(plate:GetEffectiveScale() * 100), f and N(f:GetWidth()) or "-", f and N(f:GetHeight()) or "-"))
+		local mt, found = getmetatable(plate), {}
+		local idx = mt and mt.__index
+		if type(idx) == "table" then
+			for k in pairs(idx) do if type(k) == "string" and (k:find("Bound") or k:find("Hit") or k:find("Click") or k:find("Stack")) then found[#found + 1] = k end end
+		end
+		table.sort(found)
+		Print("plate methods: " .. (#found > 0 and table.concat(found, ", ") or "none found"))
+		local uf = plate.UnitFrame
+		if uf then local w, h = uf:GetSize(); Print(("Blizzard's plate frame %s x %s, mouse %s"):format(N(w), N(h), tostring(uf:IsMouseEnabled()))) end
+		for _, cv in ipairs({ "nameplateHorizontalScale", "NamePlateHorizontalScale", "nameplateVerticalScale", "NamePlateVerticalScale", "nameplateSelectedScale", "nameplateMotion", "nameplateGlobalScale" }) do
+			local v = GetCVar(cv); if v then Print(cv .. " = " .. v) end
+		end
 		return
 	elseif msg == "tank" then
 		db.tank = (db.tank == "auto" and "on") or (db.tank == "on" and "off") or "auto"

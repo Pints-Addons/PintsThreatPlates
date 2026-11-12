@@ -1,5 +1,11 @@
 Pint's Threat Plates - Changelog
 
+v1.3.9
+- Mob names show instead of "Unknown" when the game hadn't loaded the name yet as the plate appeared.
+- Your debuff icons on plates are bigger.
+- WoW Forever: plates hand the game their whole size (name and bar) for stacking, and /pn hitbox records the
+  game's nameplate settings - plates still overlap there; this is groundwork for fixing it.
+
 v1.3.8
 - Your target's plate is bigger (125% - "Target plate size" in the options, 100-200%) and has a bright white border, so
   it stands out in a pack.

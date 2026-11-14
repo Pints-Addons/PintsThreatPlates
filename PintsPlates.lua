@@ -116,6 +116,14 @@ end
 local SECRET = type(issecretvalue) == "function"
 local function IsSecret(v) return SECRET and issecretvalue(v) end
 local function Known(v) if IsSecret(v) then return nil end return v end
+-- a player (not an NPC)? WoW Forever can hide the answer; then the unit's id says ("Player-...")
+local function IsPlayerUnit(u)
+	local p = Known(UnitIsPlayer(u))
+	if p ~= nil then return p end
+	local g = Known(UnitGUID(u))
+	if g then return g:sub(1, 7) == "Player-" end
+	return false
+end
 -- UnitDetailedThreatSituation, with anything the game hides treated as "no information"
 local function Threat(a, b)
 	local tanking, status, scaled, raw, value = UnitDetailedThreatSituation(a, b)
@@ -174,7 +182,7 @@ local function ThreatScore(unit)
 end
 
 local function ReactionColor(unit)
-	if UnitIsPlayer(unit) then
+	if IsPlayerUnit(unit) then
 		local _, cls = UnitClass(unit)
 		local c = Known(cls) and RAID_CLASS_COLORS[cls]
 		if c then return c.r, c.g, c.b end
@@ -239,6 +247,8 @@ local function Build(plate)
 	f.text = f.hp:CreateFontString(nil, "OVERLAY", "PintsPlatesBar"); f.text:SetPoint("CENTER", 0, 0)
 	f.name = f:CreateFontString(nil, "OVERLAY", "PintsPlatesName")
 	f.name:SetPoint("BOTTOM", f, "TOP", 0, 2); f.name:SetWordWrap(false)
+	-- enemy players get their faction's badge beside the name, so they never look like the NPCs around them
+	f.faction = f:CreateTexture(nil, "OVERLAY"); f.faction:SetSize(22, 22); f.faction:SetPoint("RIGHT", f.name, "LEFT", 2, -4); f.faction:Hide()
 	f.level = f:CreateFontString(nil, "OVERLAY", "PintsPlatesLevel")
 	f.level:SetPoint("LEFT", f, "RIGHT", 3, 0)
 	f.rank = f:CreateFontString(nil, "OVERLAY", "PintsPlatesName")
@@ -567,10 +577,21 @@ local function Setup(f)
 	local u = f.unit
 	f.nameTries = nil
 	SetName(f)
-	if UnitIsPlayer(u) then
+	f.faction:Hide()
+	if IsPlayerUnit(u) then
 		local _, cls = UnitClass(u)
 		local c = Known(cls) and RAID_CLASS_COLORS[cls]
 		if c then f.name:SetTextColor(c.r, c.g, c.b) else f.name:SetTextColor(1, 1, 1) end
+		local fac = Known(UnitFactionGroup(u))
+		local mine = UnitFactionGroup("player")
+		if (fac == "Alliance" or fac == "Horde") and fac ~= mine then
+			f.faction:SetTexture("Interface\\TargetingFrame\\UI-PVP-" .. fac); f.faction:SetTexCoord(0, 0.62, 0, 0.62); f.faction:Show()
+			-- Alliance players' names in Alliance blue (the game's own faction colour where it has one)
+			if fac == "Alliance" then
+				local ac = PLAYER_FACTION_COLORS and PLAYER_FACTION_COLORS[1]
+				if ac then f.name:SetTextColor(ac.r, ac.g, ac.b) else f.name:SetTextColor(0.29, 0.55, 1) end
+			end
+		end
 	else
 		f.name:SetTextColor(1, 1, 1)
 	end

@@ -810,6 +810,9 @@ end
 function PP.Stacking()
 	if InCombatLockdown() then PP.pending = true; return end
 	pcall(SetCVar, "nameplateMotion", db.stack and 1 or 0)
+	-- WoW Forever has no "nameplateMotion": its stacking is "nameplateStackingTypes" ("A" is what the game's own
+	-- Stack option sets; "0" is off)
+	if GetCVar("nameplateStackingTypes") ~= nil then pcall(SetCVar, "nameplateStackingTypes", db.stack and "A" or "0") end
 	pcall(SetCVar, "nameplateOverlapV", db.spacing or 1.1)
 	pcall(SetCVar, "nameplateMaxDistance", db.range or 41)
 	if db.onScreen then

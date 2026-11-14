@@ -1,6 +1,8 @@
 Pint's Threat Plates - Changelog
 
 v1.3.10
+- WoW Forever: plates stack again - "Stack plates" now switches on the game's own stacking there (a different setting
+  from Classic's).
 - Enemy players stand out from NPCs: their class colour (also on WoW Forever, where the game can hide whether a unit
   is a player) and their faction's badge beside the name. Alliance players' names are Alliance blue.
 

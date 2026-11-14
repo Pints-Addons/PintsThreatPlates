@@ -1,5 +1,9 @@
 Pint's Threat Plates - Changelog
 
+v1.3.11
+- WoW Forever: stacking uses the game's own stacking again, set as fast as it goes (1.3.10's own bounds frame stopped
+  it from working). /pn ownstack tries Pint's snap-apart stacking instead, and reports what it can read.
+
 v1.3.10
 - WoW Forever: plates stack again - "Stack plates" now switches on the game's own stacking there (a different setting
   from Classic's).

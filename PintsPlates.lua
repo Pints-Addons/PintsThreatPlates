@@ -21,7 +21,7 @@ local DEFAULTS = {
 	tank = "auto", tankFlip = false, steps = 10,
 	width = 150, height = 20, nameSize = 12, textSize = 10,
 	showName = true, showLevel = true, healthText = "both", showThreat = true, showArrows = true, showMarks = true, targetEdge = true, targetScale = 1.25, showQuest = true, showDebuffs = true, showCast = true, friendly = false, firstName = false,
-	stack = true, onScreen = true, spacing = 1.1, range = 41,
+	stack = true, ownStack = false, onScreen = true, spacing = 1.1, range = 41,
 	minimap = {},
 }
 local db
@@ -202,7 +202,8 @@ local function Layout(f)
 	f:SetSize(db.width, db.height)
 	-- centre the whole plate (name + bar) on the plate box so neighbours stack cleanly
 	local nameH = db.showName and (db.nameSize + 2) or 0
-	f:ClearAllPoints(); f:SetPoint("CENTER", f:GetParent(), "CENTER", 0, -nameH / 2)
+	f.baseY = -nameH / 2
+	f:ClearAllPoints(); f:SetPoint("CENTER", f:GetParent(), "CENTER", 0, f.baseY + (f.spread or 0))
 	-- what WoW Forever keeps apart when stacking: the whole plate - name and bar, with a little gap - not just the
 	-- bar (with only the bar, the next plate's name and bar landed on this one). It grows with your target's plate.
 	if not f.bounds then f.bounds = CreateFrame("Frame", nil, f) end
@@ -781,16 +782,18 @@ local function Added(unit)
 	f.friendly = friendly
 	-- WoW Forever: plates keep apart by the size of a frame on each plate - the game's own health bar unless told
 	-- otherwise, and that's hidden here, so they piled on top of each other. Ours is the one to keep apart.
+	-- (our own bounds frame stopped the game's stacking altogether: Blizzard's own plate, faded out but still there,
+	-- is what it keeps apart, and that works - ours sits in the same spot. Only with /pn ownstack is ours used.)
 	if not f.bounds then Layout(f) end
-	local box = f.bounds or f
-	if plate.SetStackingBoundsFrame and plate.pintsBounds ~= box then
-		if pcall(plate.SetStackingBoundsFrame, plate, box) then plate.pintsBounds = box end
+	if db.ownStack and plate.SetStackingBoundsFrame and plate.pintsBounds ~= f.bounds then
+		if pcall(plate.SetStackingBoundsFrame, plate, f.bounds) then plate.pintsBounds = f.bounds end
 	end
 	if not f.cast then MakeCast(f) end
 	f.unit = unit
 	HideBlizzard(plate, true)
 	C_Timer.After(0, function() if plate.PintsThreatPlate == f and f.unit == unit then HideBlizzard(plate, true) end end)
 	f:Show()
+	f.spread = 0
 	active[unit] = f
 	Setup(f)
 	Debuffs(f)
@@ -812,7 +815,12 @@ function PP.Stacking()
 	pcall(SetCVar, "nameplateMotion", db.stack and 1 or 0)
 	-- WoW Forever has no "nameplateMotion": its stacking is "nameplateStackingTypes" ("A" is what the game's own
 	-- Stack option sets; "0" is off)
-	if GetCVar("nameplateStackingTypes") ~= nil then pcall(SetCVar, "nameplateStackingTypes", db.stack and "A" or "0") end
+	-- (the game's floats plates apart; /pn ownstack tries ours, which snaps - where the game shows add-ons where plates are)
+	if GetCVar("nameplateStackingTypes") ~= nil then pcall(SetCVar, "nameplateStackingTypes", (db.stack and not db.ownStack) and "A" or "0") end
+	-- as quick as the game allows: whichever speed setting this version has, at its fastest
+	for _, cv in ipairs({ "nameplateMotionSpeed", "nameplateStackingSpeed", "NamePlateStackingSpeed", "nameplateStackSpeed" }) do
+		if GetCVar(cv) ~= nil then pcall(SetCVar, cv, "1") end
+	end
 	pcall(SetCVar, "nameplateOverlapV", db.spacing or 1.1)
 	pcall(SetCVar, "nameplateMaxDistance", db.range or 41)
 	if db.onScreen then
@@ -869,6 +877,7 @@ ev:SetScript("OnEvent", function(_, e, a1)
 		PintsPlatesDB = PintsPlatesDB or {}
 		db = PintsPlatesDB
 		for k, v in pairs(DEFAULTS) do if db[k] == nil then db[k] = (type(v) == "table") and {} or v end end
+		if db.ownStackV ~= 2 then db.ownStack = false; db.ownStackV = 2 end   -- (back to the game's stacking, once)
 		db.colors = db.colors or {}
 		if not db.v2 then db.v2 = true; if (db.spacing or 0) < 1.1 then db.spacing = 1.1 end end   -- stop plates overlapping
 		if not db.v3 then          -- bigger plates: move anyone still on the old default sizes up to the new ones
@@ -933,6 +942,57 @@ function PP.Arrows()
 end
 
 local tick = 0
+---------------------------------------------------------------- our own stacking (WoW Forever)
+-- WoW Forever: plates that would overlap on screen snap apart - the lowest stays put and each one above it moves just
+-- clear of it, at once. (The game's own stacking floats them apart slowly; /pn ownstack switches back to it.)
+local spreader = CreateFrame("Frame")
+local sacc = 0
+spreader:SetScript("OnUpdate", function(_, el)
+	sacc = sacc + el
+	if sacc < 0.03 then return end
+	sacc = 0
+	if not db then return end
+	local on = db.stack and db.ownStack and GetCVar("nameplateMotion") == nil
+	local list = {}
+	for _, f in pairs(active) do
+		if f:IsShown() and f.bounds then
+			if not on then
+				if (f.spread or 0) ~= 0 then f.spread = 0; f:ClearAllPoints(); f:SetPoint("CENTER", f:GetParent(), "CENTER", 0, f.baseY or 0) end
+			else
+				local plate = f:GetParent()
+				local ok, x, y = pcall(plate.GetCenter, plate)
+				if ok and x and not IsSecret(x) and not IsSecret(y) then
+					local es = f:GetEffectiveScale()
+					list[#list + 1] = { f = f, x = x * plate:GetEffectiveScale(), y = (y * plate:GetEffectiveScale()), w = f.bounds:GetWidth() * es, h = f.bounds:GetHeight() * es, es = es }
+				end
+			end
+		end
+	end
+	if not on or #list == 0 then return end
+	table.sort(list, function(a, b) return a.y < b.y end)
+	local placed = {}
+	for _, e in ipairs(list) do
+		local ty = e.y
+		-- (a few passes: lifting one clear of a plate can put it on the next)
+		for _ = 1, 4 do
+			local moved = false
+			for _, p in ipairs(placed) do
+				if math.abs(e.x - p.x) < (e.w + p.w) / 2 and math.abs(ty - p.ty) < (e.h + p.h) / 2 then
+					ty = p.ty + (e.h + p.h) / 2 + 1; moved = true
+				end
+			end
+			if not moved then break end
+		end
+		e.ty = ty
+		placed[#placed + 1] = e
+		local want = (ty - e.y) / e.es
+		if math.abs(want - (e.f.spread or 0)) > 0.5 then
+			e.f.spread = want
+			e.f:ClearAllPoints(); e.f:SetPoint("CENTER", e.f:GetParent(), "CENTER", 0, (e.f.baseY or 0) + want)
+		end
+	end
+end)
+
 ev:SetScript("OnUpdate", function(_, dt)
 	tick = tick + dt
 	if tick < 0.15 then return end
@@ -1180,6 +1240,17 @@ SlashCmdList.PINTSPLATES = function(msg)
 			local v = GetCVar(cv); if v then Print(cv .. " = " .. v) end
 		end
 		return
+	elseif msg == "ownstack" then
+		db.ownStack = not db.ownStack
+		PP.Stacking()
+		local u = next(active)
+		local pl = u and C_NamePlate.GetNamePlateForUnit(u)
+		local ok, x = pl and pcall(pl.GetCenter, pl)
+		if pl then Print("plate positions " .. ((ok and x and not IsSecret(x)) and "can be read here." or "are hidden from add-ons here - our stacking can't work.")) end
+		local found = {}
+		for _, cv in ipairs({ "nameplateMotionSpeed", "nameplateStackingSpeed", "NamePlateStackingSpeed", "nameplateStackSpeed", "nameplateOverlapV", "nameplateMotion" }) do if GetCVar(cv) ~= nil then found[#found + 1] = cv .. "=" .. GetCVar(cv) end end
+		Print("speed settings found: " .. (#found > 0 and table.concat(found, ", ") or "none"))
+		Print("stacking: " .. (db.ownStack and "Pint's - plates snap apart" or "the game's - plates float apart") .. ". /reload to apply it fully.")
 	elseif msg == "tank" then
 		db.tank = (db.tank == "auto" and "on") or (db.tank == "on" and "off") or "auto"
 		Print("tank colours: " .. ({ auto = "automatic (Defensive Stance, Bear Form, Righteous Fury)", on = "always", off = "never" })[db.tank] .. ".")

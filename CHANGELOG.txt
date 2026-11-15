@@ -1,5 +1,14 @@
 Pint's Threat Plates - Changelog
 
+v1.3.12
+- WoW Forever: plates stack again. Threat Plates had set the game's stacking speed to its fastest, and on Forever that
+  stops stacking altogether - it's now left at the game's own speed (plates drift apart over a moment).
+- WoW Forever: the game keeps plates apart by its own (hidden) health bar, which is thin - it's now stretched to the full
+  size of our plate (name and bar), so whole plates are kept clear of each other.
+- WoW Forever: Blizzard's plate under ours is kept 1% visible (the game leaves fully see-through plates out of its
+  stacking), with its text hidden outright so its name doesn't show through.
+- /pn stack shows what stacking is working with; /pn blizz and /pn plain are stacking tests.
+
 v1.3.11
 - WoW Forever: stacking uses the game's own stacking again, set as fast as it goes (1.3.10's own bounds frame stopped
   it from working). /pn ownstack tries Pint's snap-apart stacking instead, and reports what it can read.

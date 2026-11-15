@@ -610,15 +610,18 @@ end
 
 -- Blizzard's plate stays alive underneath; on enemies everything it draws goes see-through. Rather than trust
 -- one frame name, every child of the plate that isn't ours is faded, and kept faded if the game tries to show it.
+-- (WoW Forever leaves a plate out of its stacking when Blizzard's plate is fully see-through - so there it's kept a
+-- hair visible, 1%; its text is hidden outright below, since Blizzard's name showed through faintly)
+local HIDE_A = (type(issecretvalue) == "function") and 0.01 or 0
 local function Fade(child, hide)
 	if not child.ppHooked then
 		child.ppHooked = true
 		hooksecurefunc(child, "SetAlpha", function(self, a)
-			if self.ppHide and a and a > 0 and not self.ppBusy then self.ppBusy = true; self:SetAlpha(0); self.ppBusy = nil end
+			if self.ppHide and a and not IsSecret(a) and a > HIDE_A and not self.ppBusy then self.ppBusy = true; self:SetAlpha(HIDE_A); self.ppBusy = nil end
 		end)
 	end
 	child.ppHide = hide
-	child.ppBusy = true; child:SetAlpha(hide and 0 or 1); child.ppBusy = nil
+	child.ppBusy = true; child:SetAlpha(hide and HIDE_A or 1); child.ppBusy = nil
 end
 -- a few of Blizzard's plate pieces (highlights, cast bar bits) are set to ignore their parent's transparency,
 -- so fading the plate doesn't reach them; find those and fade them directly
@@ -633,7 +636,35 @@ local function Sweep(frame, hide, depth)
 		Sweep(c, hide, depth + 1)
 	end
 end
+-- every piece of text on Blizzard's plate (its name, its health numbers): hidden outright, and kept hidden when
+-- Blizzard sets it again - Blizzard's plate itself stays a hair visible on WoW Forever, and its name showed through
+local function HideText(frame, hide, depth, skip)
+	if depth > 4 or (skip and skip[frame]) or not frame or (frame.IsForbidden and frame:IsForbidden()) then return end
+	for _, r in ipairs({ frame:GetRegions() }) do
+		if r.GetObjectType and r:GetObjectType() == "FontString" and not r.ppMine then
+			if not r.ppHooked then
+				r.ppHooked = true
+				hooksecurefunc(r, "SetAlpha", function(self, a)
+					if self.ppHide and a and not IsSecret(a) and a > 0 and not self.ppBusy then self.ppBusy = true; self:SetAlpha(0); self.ppBusy = nil end
+				end)
+			end
+			r.ppHide = hide
+			r.ppBusy = true; pcall(r.SetAlpha, r, hide and 0 or 1); r.ppBusy = nil
+		end
+	end
+	for _, c in ipairs({ frame:GetChildren() }) do
+		if c ~= frame.PintsThreatPlate and not c.ppKeep and not c.ppMine then HideText(c, hide, depth + 1, skip) end
+	end
+end
 local function HideBlizzard(plate, hide)
+	if PP.testBlizz then hide = false end      -- (/pn blizz: a test, Blizzard's plates left showing under ours)
+	local uf = plate.UnitFrame
+	if HIDE_A > 0 and uf then
+		-- (not the debuff row or the raid marker - those are kept showing, with their own numbers)
+		local skip = {}
+		for _, k in ipairs({ "AurasFrame", "BuffFrame", "DebuffFrame", "RaidTargetFrame" }) do if uf[k] then skip[uf[k]] = true end end
+		HideText(uf, hide, 1, skip)
+	end
 	for _, child in ipairs({ plate:GetChildren() }) do
 		if child ~= plate.PintsThreatPlate and not (child.IsForbidden and child:IsForbidden()) then Fade(child, hide); Sweep(child, hide, 1) end
 	end
@@ -768,6 +799,22 @@ local function Cast(f)
 end
 PP.Cast = Cast
 
+-- WoW Forever keeps plates apart by Blizzard's own health bar (faded out here, but still there) - a thin bar, so our
+-- taller plates (name and bar) sat on each other. That bar is stretched to our plate's full size: it's see-through, so
+-- nothing shows, but stacking then keeps the whole of each plate clear of the next.
+local function BlizzBounds(plate)
+	if not (plate and plate.SetStackingBoundsFrame) or PP.testPlain then return end   -- (WoW Forever only)
+	local uf = plate.UnitFrame
+	local hb = uf and (uf.HealthBarsContainer or uf.healthBar or uf.HealthBar)
+	if not hb or (hb.IsForbidden and hb:IsForbidden()) then return end
+	local h = db.height + (db.showName and (db.nameSize + 4) or 2) + 4
+	pcall(function()
+		hb:SetHeight(h)
+		if hb.SetWidth then hb:SetWidth(db.width + 8) end
+	end)
+	return hb
+end
+PP.BlizzBounds = BlizzBounds
 local function Added(unit)
 	local plate = C_NamePlate.GetNamePlateForUnit(unit)
 	if not plate or (plate.IsForbidden and plate:IsForbidden()) then return end
@@ -791,7 +838,8 @@ local function Added(unit)
 	if not f.cast then MakeCast(f) end
 	f.unit = unit
 	HideBlizzard(plate, true)
-	C_Timer.After(0, function() if plate.PintsThreatPlate == f and f.unit == unit then HideBlizzard(plate, true) end end)
+	if not db.ownStack then BlizzBounds(plate) end
+	C_Timer.After(0, function() if plate.PintsThreatPlate == f and f.unit == unit then HideBlizzard(plate, true); if not db.ownStack then BlizzBounds(plate) end end end)
 	f:Show()
 	f.spread = 0
 	active[unit] = f
@@ -812,14 +860,19 @@ end
 -- our plate (name + bar), so neighbours sit just clear of each other.
 function PP.Stacking()
 	if InCombatLockdown() then PP.pending = true; return end
+	if PP.testPlain then return end
 	pcall(SetCVar, "nameplateMotion", db.stack and 1 or 0)
 	-- WoW Forever has no "nameplateMotion": its stacking is "nameplateStackingTypes" ("A" is what the game's own
 	-- Stack option sets; "0" is off)
 	-- (the game's floats plates apart; /pn ownstack tries ours, which snaps - where the game shows add-ons where plates are)
+	PP.FOREVER_STACK = GetCVar("nameplateStackingTypes") ~= nil
 	if GetCVar("nameplateStackingTypes") ~= nil then pcall(SetCVar, "nameplateStackingTypes", (db.stack and not db.ownStack) and "A" or "0") end
-	-- as quick as the game allows: whichever speed setting this version has, at its fastest
-	for _, cv in ipairs({ "nameplateMotionSpeed", "nameplateStackingSpeed", "NamePlateStackingSpeed", "nameplateStackSpeed" }) do
-		if GetCVar(cv) ~= nil then pcall(SetCVar, cv, "1") end
+	-- stacking speed: WoW Forever's own (0.025). Set to 1 there, plates stopped stacking at all - so it's put back to the
+	-- game's default and left alone (Classic keeps its own speed too)
+	if PP.FOREVER_STACK then
+		for _, cv in ipairs({ "nameplateMotionSpeed", "nameplateStackingSpeed", "NamePlateStackingSpeed", "nameplateStackSpeed" }) do
+			if GetCVar(cv) ~= nil and GetCVarDefault then local d = GetCVarDefault(cv); if d and GetCVar(cv) ~= d then pcall(SetCVar, cv, d) end end
+		end
 	end
 	pcall(SetCVar, "nameplateOverlapV", db.spacing or 1.1)
 	pcall(SetCVar, "nameplateMaxDistance", db.range or 41)
@@ -834,9 +887,16 @@ function PP.Stacking()
 	PP.gameScale = GetCVar("nameplateSelectedScale") ~= nil and pcall(SetCVar, "nameplateSelectedScale", db.targetScale or 1.25) or false
 	for _, f in pairs(active) do f.tgtScale = nil end
 	local h = db.height + (db.showName and (db.nameSize + 4) or 2) + 4
-	if C_NamePlate and C_NamePlate.SetNamePlateEnemySize then pcall(C_NamePlate.SetNamePlateEnemySize, db.width + 16, h) end
+	-- the box the game keeps plates apart by: room for your target's bigger plate too when the game doesn't grow its box
+	-- itself (WoW Forever has no "selected scale" setting - our target plate grew past its box and sat on the next one),
+	-- and the "Gap between plates" setting where the game has no overlap setting of its own to take it
+	local w = db.width + 16
+	if not PP.gameScale then h = h * math.max(1, db.targetScale or 1.25); w = w * math.max(1, db.targetScale or 1.25) end
+	if GetCVar("nameplateOverlapV") == nil then h = h * math.max(1, db.spacing or 1.1) end
+	h, w = math.ceil(h), math.ceil(w)
+	if C_NamePlate and C_NamePlate.SetNamePlateEnemySize then pcall(C_NamePlate.SetNamePlateEnemySize, w, h) end
 	-- (the newer clients have one size for all plates)
-	if C_NamePlate and C_NamePlate.SetNamePlateSize then pcall(C_NamePlate.SetNamePlateSize, db.width + 16, h) end
+	if C_NamePlate and C_NamePlate.SetNamePlateSize then pcall(C_NamePlate.SetNamePlateSize, w, h) end
 end
 
 function PP.ApplyAll()
@@ -877,7 +937,7 @@ ev:SetScript("OnEvent", function(_, e, a1)
 		PintsPlatesDB = PintsPlatesDB or {}
 		db = PintsPlatesDB
 		for k, v in pairs(DEFAULTS) do if db[k] == nil then db[k] = (type(v) == "table") and {} or v end end
-		if db.ownStackV ~= 2 then db.ownStack = false; db.ownStackV = 2 end   -- (back to the game's stacking, once)
+		if db.ownStackV ~= 3 then db.ownStack = false; db.ownStackV = 3 end   -- (back to the game's stacking, once)
 		db.colors = db.colors or {}
 		if not db.v2 then db.v2 = true; if (db.spacing or 0) < 1.1 then db.spacing = 1.1 end end   -- stop plates overlapping
 		if not db.v3 then          -- bigger plates: move anyone still on the old default sizes up to the new ones
@@ -1239,6 +1299,39 @@ SlashCmdList.PINTSPLATES = function(msg)
 		for _, cv in ipairs({ "nameplateHorizontalScale", "NamePlateHorizontalScale", "nameplateVerticalScale", "NamePlateVerticalScale", "nameplateSelectedScale", "nameplateMotion", "nameplateGlobalScale" }) do
 			local v = GetCVar(cv); if v then Print(cv .. " = " .. v) end
 		end
+		return
+	elseif msg == "stack" then
+		-- what stacking is working with right now (for checking overlaps)
+		local gw, gh
+		if C_NamePlate and C_NamePlate.GetNamePlateSize then local ok, a, b = pcall(C_NamePlate.GetNamePlateSize); if ok then gw, gh = a, b end end
+		local tp = C_NamePlate and C_NamePlate.GetNamePlateForUnit and C_NamePlate.GetNamePlateForUnit("target")
+		local hb = tp and BlizzBounds(tp)
+		if hb then local ok, w2, h2 = pcall(hb.GetSize, hb); Print(("target's stacking bar: %s x %s"):format(ok and tostring(w2 and math.floor(w2)) or "?", ok and tostring(h2 and math.floor(h2)) or "hidden")) else Print("target's stacking bar: " .. (tp and "not found" or "no target")) end
+		Print(("stacking %s (game setting %s), plate box %s x %s, target grown by %s, game grows target: %s, gap %s"):format(
+			db.stack and "on" or "off", tostring(GetCVar("nameplateStackingTypes") or GetCVar("nameplateMotion")), tostring(gw and math.floor(gw)), tostring(gh and math.floor(gh)),
+			tostring(db.targetScale), tostring(PP.gameScale), tostring(db.spacing)))
+		return
+	elseif msg == "plain" then
+		if InCombatLockdown() then Print("the game won't let nameplate settings change in a fight - try /pn plain out of combat, near some mobs."); return end
+		-- a test for the stacking: the game's own speed, gap and plate size back (and the stretched bar off), until /reload
+		PP.testPlain = true
+		local out = {}
+		for _, cv in ipairs({ "nameplateMotionSpeed", "nameplateOverlapV", "nameplateOverlapH", "nameplateSelectedScale" }) do
+			if GetCVar(cv) ~= nil then
+				local d = GetCVarDefault and GetCVarDefault(cv)
+				if d then pcall(SetCVar, cv, d) end
+				out[#out + 1] = cv .. "=" .. tostring(GetCVar(cv))
+			end
+		end
+		if C_NamePlate and C_NamePlate.SetNamePlateSize then pcall(C_NamePlate.SetNamePlateSize, 110, 45) end
+		Print("test: the game's own stacking settings back (" .. table.concat(out, ", ") .. ", plate box 110 x 45). Do the plates move apart now? /reload puts Pint's settings back.")
+		return
+	elseif msg == "blizz" then
+		-- a test for the stacking: Blizzard's plates shown under ours (until /pn blizz again or a /reload) - if they then
+		-- move apart, it's being see-through that keeps the game from stacking them
+		PP.testBlizz = not PP.testBlizz
+		for u, f in pairs(active) do local pl = C_NamePlate.GetNamePlateForUnit(u); if pl then HideBlizzard(pl, true) end end
+		Print(PP.testBlizz and "test: Blizzard's plates showing under ours - do the plates move apart now? (/pn blizz to hide them again)" or "Blizzard's plates hidden again.")
 		return
 	elseif msg == "ownstack" then
 		db.ownStack = not db.ownStack

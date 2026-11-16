@@ -181,8 +181,17 @@ local function ThreatScore(unit)
 	return scaled or 0
 end
 
+-- Alliance blue (the game's own faction colour where it has one)
+local function AllianceBlue()
+	local ac = PLAYER_FACTION_COLORS and PLAYER_FACTION_COLORS[1]
+	if ac then return ac.r, ac.g, ac.b end
+	return 0.29, 0.55, 1
+end
 local function ReactionColor(unit)
 	if IsPlayerUnit(unit) then
+		-- Alliance players (when you're not one): the bar in Alliance blue; their name keeps the class colour
+		local fac = Known(UnitFactionGroup(unit))
+		if fac == "Alliance" and UnitFactionGroup("player") ~= "Alliance" then return AllianceBlue() end
 		local _, cls = UnitClass(unit)
 		local c = Known(cls) and RAID_CLASS_COLORS[cls]
 		if c then return c.r, c.g, c.b end
@@ -587,11 +596,6 @@ local function Setup(f)
 		local mine = UnitFactionGroup("player")
 		if (fac == "Alliance" or fac == "Horde") and fac ~= mine then
 			f.faction:SetTexture("Interface\\TargetingFrame\\UI-PVP-" .. fac); f.faction:SetTexCoord(0, 0.62, 0, 0.62); f.faction:Show()
-			-- Alliance players' names in Alliance blue (the game's own faction colour where it has one)
-			if fac == "Alliance" then
-				local ac = PLAYER_FACTION_COLORS and PLAYER_FACTION_COLORS[1]
-				if ac then f.name:SetTextColor(ac.r, ac.g, ac.b) else f.name:SetTextColor(0.29, 0.55, 1) end
-			end
 		end
 	else
 		f.name:SetTextColor(1, 1, 1)
@@ -737,9 +741,51 @@ local function ModernDebuffs(f, plate)
 		end
 	end)
 end
+-- a paladin's Judgement of Wisdom or Light on the mob (anyone's - the game's own debuff row only shows yours): a small
+-- icon at the right end of the health bar. WoW Forever hides what's on a mob in a fight, so there it asks the game by the
+-- judgement's name - the answer's details stay hidden, but whether it's there or not is enough to show the icon.
+local JUDGEMENTS = {
+	{ "Judgement of Wisdom", "Interface\\Icons\\Spell_Holy_RighteousnessAura" },
+	{ "Judgement of Light", "Interface\\Icons\\Spell_Holy_HealingAura" },
+}
+local function HasDebuff(unit, name)
+	if C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
+		local ok, a = pcall(C_UnitAuras.GetAuraDataBySpellName, unit, name, "HARMFUL")
+		if ok then return a ~= nil end
+	end
+	if AuraUtil and AuraUtil.FindAuraByName then
+		local ok, a = pcall(AuraUtil.FindAuraByName, name, unit, "HARMFUL")
+		if ok then return a ~= nil end
+	end
+	if UnitDebuff then
+		for i = 1, 40 do
+			local n = UnitDebuff(unit, i)
+			if not n then break end
+			if n == name then return true end
+		end
+	end
+	return false
+end
+local function Judgements(f)
+	f.judge = f.judge or {}
+	local n = 0
+	if db.showJudgement ~= false and f.unit then
+		for _, j in ipairs(JUDGEMENTS) do
+			if HasDebuff(f.unit, j[1]) then
+				n = n + 1
+				local t = f.judge[n]
+				if not t then t = f.hp:CreateTexture(nil, "OVERLAY", nil, 7); t:SetSize(14, 14); f.judge[n] = t end
+				t:SetTexture(j[2]); t:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+				t:ClearAllPoints(); t:SetPoint("LEFT", f.hp, "RIGHT", 2 + (n - 1) * 16, 0); t:Show()
+			end
+		end
+	end
+	for i = n + 1, #f.judge do f.judge[i]:Hide() end
+end
 local function Debuffs(f)
 	if not f.unit then return end
 	if SECRET then ModernDebuffs(f, C_NamePlate.GetNamePlateForUnit(f.unit)) else pcall(ClassicDebuffs, f) end
+	pcall(Judgements, f)
 end
 PP.Debuffs = Debuffs
 
@@ -1180,6 +1226,7 @@ function PP.ToggleOptions()
 		Stepper(opt, 318, -398, "Target plate size", "targetScale", 1, 2, 0.05, function(v) return ("%d%%"):format(math.floor(v * 100 + 0.5)) end)
 		Check(opt, L, -422, "Your debuffs above the name", "showDebuffs", "Icons for your own debuffs on each mob, in a row above its name.")
 		Check(opt, L + 200, -422, "Cast bar", "showCast", "The mob's cast bar, under its health bar.")
+		Check(opt, L + 300, -422, "Judgements", "showJudgement", "A paladin's Judgement of Wisdom or Light on a mob (anyone's, not just yours): a small icon at the end of its health bar.")
 		Check(opt, L, -444, "Friendly plates (green)", "friendly", "Players and others on your side get these plates too, with a green health bar, instead of the game's own. Turn on friendly nameplates in game (Shift-V) to see them.")
 		Check(opt, L + 200, -444, "First names only", "firstName", "Leave off WoW Forever's second names (\"Pint\" instead of \"Pint Sunders\").")
 		Choice(opt, L, -122, "Health text", "healthText", { { "both", "1234/1234 | 56%" }, { "numbers", "1234/1234" }, { "percent", "56%" }, { "none", "Nothing" } })

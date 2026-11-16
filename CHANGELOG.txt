@@ -1,5 +1,12 @@
 Pint's Threat Plates - Changelog
 
+v1.3.13
+- Judgement of Wisdom and Judgement of Light on a mob - anyone's, not only yours - show as a small icon at the right
+  end of its health bar, so you can see when a paladin in the group has one up. Also on WoW Forever, in a fight.
+  Options: Judgements.
+- Alliance players (when you play Horde): their health bar is Alliance blue and their name is in their class colour
+  (it was the other way round).
+
 v1.3.12
 - WoW Forever: plates stack again. Threat Plates had set the game's stacking speed to its fastest, and on Forever that
   stops stacking altogether - it's now left at the game's own speed (plates drift apart over a moment).

@@ -28,12 +28,13 @@ local db
 
 local function Print(msg) print("|cffd4a017Pint's|r Threat Plates: " .. msg) end
 
-local function MakeFont(name, size)
+local function MakeFont(name, size, flags)
 	local f = _G[name] or CreateFont(name)
 	local file = GameFontHighlightSmall:GetFont()
-	f:SetFont(file, size, "OUTLINE"); f:SetShadowOffset(0, 0)
+	f:SetFont(file, size, flags or "OUTLINE"); f:SetShadowOffset(0, 0)
 end
 MakeFont("PintsPlatesName", 10)
+MakeFont("PintsPlatesEnemyName", 13, "THICKOUTLINE")   -- enemy players: bolder and bigger, so they stand out
 MakeFont("PintsPlatesBar", 8)
 MakeFont("PintsPlatesLevel", 14)
 
@@ -181,17 +182,17 @@ local function ThreatScore(unit)
 	return scaled or 0
 end
 
--- Alliance blue (the game's own faction colour where it has one)
-local function AllianceBlue()
-	local ac = PLAYER_FACTION_COLORS and PLAYER_FACTION_COLORS[1]
-	if ac then return ac.r, ac.g, ac.b end
-	return 0.29, 0.55, 1
-end
+-- enemy players' bars in their faction's colour: a deep, royal Stormwind blue for the Alliance, a strong blood red for
+-- the Horde
+local function AllianceBlue() return 0.08, 0.26, 0.72 end
+local function HordeRed() return 0.72, 0.04, 0.04 end
 local function ReactionColor(unit)
 	if IsPlayerUnit(unit) then
-		-- Alliance players (when you're not one): the bar in Alliance blue; their name keeps the class colour
+		-- players of the other faction: the bar in their faction's colour; their name keeps the class colour
 		local fac = Known(UnitFactionGroup(unit))
-		if fac == "Alliance" and UnitFactionGroup("player") ~= "Alliance" then return AllianceBlue() end
+		local mine = UnitFactionGroup("player")
+		if fac == "Alliance" and mine ~= "Alliance" then return AllianceBlue() end
+		if fac == "Horde" and mine ~= "Horde" then return HordeRed() end
 		local _, cls = UnitClass(unit)
 		local c = Known(cls) and RAID_CLASS_COLORS[cls]
 		if c then return c.r, c.g, c.b end
@@ -258,9 +259,11 @@ local function Build(plate)
 	f.name = f:CreateFontString(nil, "OVERLAY", "PintsPlatesName")
 	f.name:SetPoint("BOTTOM", f, "TOP", 0, 2); f.name:SetWordWrap(false)
 	-- enemy players get their faction's badge beside the name, so they never look like the NPCs around them
-	f.faction = f:CreateTexture(nil, "OVERLAY"); f.faction:SetSize(22, 22); f.faction:SetPoint("RIGHT", f.name, "LEFT", 2, -4); f.faction:Hide()
+	f.faction = f:CreateTexture(nil, "OVERLAY"); f.faction:SetSize(32, 32); f.faction:SetPoint("RIGHT", f.name, "LEFT", 4, -6); f.faction:Hide()
 	f.level = f:CreateFontString(nil, "OVERLAY", "PintsPlatesLevel")
 	f.level:SetPoint("LEFT", f, "RIGHT", 3, 0)
+	-- enemy players: their class icon above the level number
+	f.classIcon = f:CreateTexture(nil, "OVERLAY"); f.classIcon:SetSize(26, 26); f.classIcon:SetPoint("BOTTOM", f.level, "TOP", 0, 1); f.classIcon:Hide()
 	f.rank = f:CreateFontString(nil, "OVERLAY", "PintsPlatesName")
 	f.rank:SetPoint("RIGHT", f, "LEFT", -3, 0)
 	-- arrow beside the threat %: red up = your highest-threat mob, green down = your lowest
@@ -587,7 +590,7 @@ local function Setup(f)
 	local u = f.unit
 	f.nameTries = nil
 	SetName(f)
-	f.faction:Hide()
+	f.faction:Hide(); f.classIcon:Hide(); f.name:SetFontObject("PintsPlatesName")
 	if IsPlayerUnit(u) then
 		local _, cls = UnitClass(u)
 		local c = Known(cls) and RAID_CLASS_COLORS[cls]
@@ -596,6 +599,12 @@ local function Setup(f)
 		local mine = UnitFactionGroup("player")
 		if (fac == "Alliance" or fac == "Horde") and fac ~= mine then
 			f.faction:SetTexture("Interface\\TargetingFrame\\UI-PVP-" .. fac); f.faction:SetTexCoord(0, 0.62, 0, 0.62); f.faction:Show()
+			f.name:SetFontObject("PintsPlatesEnemyName")
+			local tc = Known(cls) and CLASS_ICON_TCOORDS and CLASS_ICON_TCOORDS[cls]
+			if tc then
+				f.classIcon:SetTexture("Interface\\GLUES\\CHARACTERCREATE\\UI-CHARACTERCREATE-CLASSES")
+				f.classIcon:SetTexCoord(tc[1], tc[2], tc[3], tc[4]); f.classIcon:Show()
+			end
 		end
 	else
 		f.name:SetTextColor(1, 1, 1)
@@ -721,6 +730,26 @@ local function BlizzAuras(plate)
 	if not uf then return end
 	return uf.AurasFrame or uf.BuffFrame or uf.DebuffFrame
 end
+-- how far above the bottom of Blizzard's aura row its lowest shown icon sits (in the row's own units); nil if nothing shown
+function PP.AuraGap(af)
+	local bottom = af:GetBottom()
+	if not bottom then return end
+	local low
+	local function Scan(fr, depth)
+		if depth > 3 then return end
+		for _, r in ipairs({ fr:GetRegions() }) do
+			if r:IsShown() and r.GetObjectType and r:GetObjectType() == "Texture" and (r:GetWidth() or 0) > 6 then
+				local b = r:GetBottom(); if b and (not low or b < low) then low = b end
+			end
+		end
+		for _, c in ipairs({ fr:GetChildren() }) do if c:IsShown() then Scan(c, depth + 1) end end
+	end
+	local ok = pcall(Scan, af, 0)
+	if not ok or not low then return end
+	local gap = low - bottom
+	if gap > 0.5 and gap < 60 then return gap end
+	return 0
+end
 local function ModernDebuffs(f, plate)
 	local af = plate and BlizzAuras(plate)
 	if not af or (af.IsForbidden and af:IsForbidden()) then return end
@@ -731,8 +760,13 @@ local function ModernDebuffs(f, plate)
 			if af.SetIgnoreParentAlpha then af:SetIgnoreParentAlpha(true) end
 			af.ppBusy = true; af:SetAlpha(1); af.ppBusy = nil
 			if af.SetScale and af.ppScale ~= DSCALE then af.ppBase = af.ppBase or af:GetScale(); af:SetScale(af.ppBase * DSCALE); af.ppScale = DSCALE end
+			-- Blizzard's row has empty space under its icons: measure it (from how it was last drawn) and take it off,
+			-- so the icons sit just above the name
+			local gap = PP.AuraGap(af)
+			if gap then af.ppGap = gap end
 			local a, p, y = DebuffAnchor(f)
-			af:ClearAllPoints(); af:SetPoint("BOTTOM", a, p, 0, y)
+			-- (a little lower still: it sat well clear of the name - 6 pts down, in the row's own size)
+			af:ClearAllPoints(); af:SetPoint("BOTTOM", a, p, 0, y - (af.ppGap or 0) - 6 / DSCALE)
 			af.ppMine = true
 		elseif af.ppMine then
 			af.ppMine = nil
@@ -947,6 +981,7 @@ end
 
 function PP.ApplyAll()
 	MakeFont("PintsPlatesName", db.nameSize)
+	MakeFont("PintsPlatesEnemyName", db.nameSize + 3, "THICKOUTLINE")
 	MakeFont("PintsPlatesBar", db.textSize)
 	MakeFont("PintsPlatesLevel", math.max(db.nameSize + 4, db.height - 2))   -- level beside the bar: sized to the bar
 	for _, f in ipairs(built) do Layout(f) end

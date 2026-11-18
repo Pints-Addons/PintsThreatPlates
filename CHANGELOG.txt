@@ -6,6 +6,7 @@ v1.3.13
   Options: Judgements.
 - Alliance players (when you play Horde): their health bar is Alliance blue and their name is in their class colour
   (it was the other way round).
+- WoW Forever: the debuff icons (your DoTs) sit just above the name - the game's own debuff row had a gap under them.
 
 v1.3.12
 - WoW Forever: plates stack again. Threat Plates had set the game's stacking speed to its fastest, and on Forever that
